@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="csrf-token" content="{{ csrf_token() }}">
-    <title>DEPDev Chatbot</title>
+    <title>Bot for Automated Semantic Assistance — BASA by DEPDev — Department of Economy, Planning, and Development</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
         body { background: #f8fafc; }
@@ -43,13 +43,13 @@
 </head>
 <body>
 <div class="chat-container">
-    <h3 class="mb-3">DEPDev Chatbot</h3>
+    <h3 class="mb-3">BASA: Bot for Automated Semantic Assistance</h3>
     <div id="chat-log" class="chat-log">
         <noscript>
             <div class="chat-message">
                 <div class="chat-avatar bot">Bot</div>
                 <div class="chat-content bot">
-                    <p><strong>JavaScript is required:</strong> This chatbot interface will not work unless JavaScript is enabled in your browser. Please enable JavaScript to use the DEPDev Chatbot.</p>
+                    <p><strong>JavaScript is required:</strong> This chatbot interface will not work unless JavaScript is enabled in your browser. Please enable JavaScript to use BASA.</p>
                 </div>
             </div>
         </noscript>
@@ -63,6 +63,14 @@
         <label for="auto-retry" class="mb-0">Retry sending output if connection is lost</label>
         <button id="test-multiline" class="btn btn-secondary btn-sm ms-auto" type="button">Test multiline bot reply</button>
     </div>
+    <noscript>
+        <div class="chat-message">
+            <div class="chat-avatar bot">Bot</div>
+            <div class="chat-content bot">
+                <p><strong>JavaScript is required:</strong> This chatbot interface will not work unless JavaScript is enabled in your browser. Please enable JavaScript to use BASA.</p>
+            </div>
+        </div>
+    </noscript>
 </div>
 <script>
 const chatLog = document.getElementById('chat-log');

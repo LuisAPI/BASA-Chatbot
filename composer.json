@@ -1,9 +1,9 @@
 {
     "$schema": "https://getcomposer.org/schema.json",
-    "name": "laravel/laravel",
+    "name": "depdev/basa",
     "type": "project",
-    "description": "The skeleton application for the Laravel framework.",
-    "keywords": ["laravel", "framework"],
+    "description": "BASA: Bot for Automated Semantic Assistance for DEPDev (Laravel + Ollama)",
+    "keywords": ["laravel", "framework", "chatbot", "basa", "depdev", "ollama"],
     "license": "MIT",
     "require": {
         "php": "^8.2",
