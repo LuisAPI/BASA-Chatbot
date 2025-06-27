@@ -7,8 +7,29 @@
     <title>Bot for Automated Semantic Assistance — BASA by DEPDev — Department of Economy, Planning, and Development</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
-        body { background: #f8fafc; }
-        .chat-container { max-width: 600px; margin: 40px auto; background: #fff; border-radius: 8px; box-shadow: 0 2px 8px #0001; padding: 24px; }
+        body {
+            background: url('/images/BP-DEPDev%20Zoom%20Background.jpg') no-repeat center center fixed;
+            background-size: cover;
+        }
+        .chat-title {
+            color: #0e4384;
+            font-family: 'Georgia', 'Times New Roman', Times, serif;
+            font-variant: small-caps;
+            font-weight: 600;
+            font-size: 1.7em;
+            margin-bottom: 1.2em;
+            text-align: center;
+        }
+        .chat-container {
+            width: 90vw;
+            max-width: 54em;
+            min-width: 18em;
+            margin: 3em auto;
+            background: #fff;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px #0001;
+            padding: 2em;
+        }
         .chat-message { display: flex; gap: 12px; margin-bottom: 18px; }
         .chat-avatar { width: 36px; height: 36px; border-radius: 50%; background: #e3f2fd; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 1.1em; color: #1976d2; }
         .chat-avatar.bot { background: #e8f5e9; color: #388e3c; }
@@ -43,7 +64,7 @@
 </head>
 <body>
 <div class="chat-container">
-    <h3 class="mb-3">BASA: Bot for Automated Semantic Assistance</h3>
+    <h3 class="chat-title">Bot for Automated Semantic Assistance</h3>
     <div id="chat-log" class="chat-log">
         <noscript>
             <div class="chat-message">
