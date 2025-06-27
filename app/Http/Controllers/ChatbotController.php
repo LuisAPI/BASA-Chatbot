@@ -75,10 +75,11 @@ class ChatbotController extends Controller
         // Add placeholder for assistant response
         $responsePlaceholder = "\nAssistant: ";
 
-        // Send the request to the model API
+        // Send the request to the model API using the system prompt field
         $response = Http::timeout(60)->post('http://127.0.0.1:11434/api/generate', [
             'model' => 'tinyllama',
-            'prompt' => $fullPrompt,
+            'system' => $systemPrompt,
+            'prompt' => $userMessage,
             'stream' => false
         ]);
 
