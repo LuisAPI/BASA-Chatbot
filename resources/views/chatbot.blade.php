@@ -44,7 +44,16 @@
 <body>
 <div class="chat-container">
     <h3 class="mb-3">DEPDev Chatbot</h3>
-    <div id="chat-log" class="chat-log"></div>
+    <div id="chat-log" class="chat-log">
+        <noscript>
+            <div class="chat-message">
+                <div class="chat-avatar bot">Bot</div>
+                <div class="chat-content bot">
+                    <p><strong>JavaScript is required:</strong> This chatbot interface will not work unless JavaScript is enabled in your browser. Please enable JavaScript to use the DEPDev Chatbot.</p>
+                </div>
+            </div>
+        </noscript>
+    </div>
     <form id="chat-form" class="d-flex gap-2">
         <textarea id="message" class="form-control" placeholder="Type your question..." autocomplete="off" required rows="1" style="resize:none; min-height:38px; overflow-y:hidden;"></textarea>
         <button class="btn btn-primary" type="submit">Send</button>
