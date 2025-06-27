@@ -16,6 +16,29 @@
         .chat-content.user { background: #e3f2fd; }
         .chat-content.bot { background: #e8f5e9; }
         .chat-log { display: flex; flex-direction: column; gap: 0; min-height: 200px; margin-bottom: 16px; }
+        .loading-dots {
+            display: flex;
+            align-items: center;
+            height: 24px;
+            width: 40px;
+            justify-content: flex-start;
+            gap: 4px;
+        }
+        .loading-dots span {
+            display: block;
+            width: 10px;
+            height: 10px;
+            background: #388e3c;
+            border-radius: 50%;
+            opacity: 0.5;
+            animation: loading-bounce 1s infinite both;
+        }
+        .loading-dots span:nth-child(2) { animation-delay: 0.2s; }
+        .loading-dots span:nth-child(3) { animation-delay: 0.4s; }
+        @keyframes loading-bounce {
+            0%, 80%, 100% { transform: translateY(0) scale(0.7); opacity: 0.5; }
+            40% { transform: translateY(-8px) scale(1.2); opacity: 1; }
+        }
     </style>
 </head>
 <body>
@@ -38,7 +61,7 @@ const chatForm = document.getElementById('chat-form');
 const messageInput = document.getElementById('message');
 const autoRetry = document.getElementById('auto-retry');
 
-function addMessage(text, sender, isError = false, retryCallback = null) {
+function addMessage(text, sender, isError = false, retryCallback = null, isLoading = false) {
     const msgDiv = document.createElement('div');
     msgDiv.className = 'chat-message';
     const avatar = document.createElement('div');
@@ -47,7 +70,9 @@ function addMessage(text, sender, isError = false, retryCallback = null) {
     const content = document.createElement('div');
     content.className = 'chat-content ' + sender;
     content.innerHTML = '';
-    if (isError && retryCallback) {
+    if (isLoading) {
+        content.innerHTML = '<span class="loading-dots"><span></span><span></span><span></span></span>';
+    } else if (isError && retryCallback) {
         content.textContent = text + ' ';
         const retryBtn = document.createElement('button');
         retryBtn.textContent = 'Try again';
@@ -70,7 +95,7 @@ function addMessage(text, sender, isError = false, retryCallback = null) {
 }
 
 async function sendMessage(msg) {
-    addMessage('...', 'bot');
+    addMessage('', 'bot', false, null, true); // show loading dots
     let resp;
     try {
         resp = await fetch('/chatbot/ask', {
