@@ -24,23 +24,17 @@
             </div>
         </noscript>
     </div>
-    <form id="chat-form" class="d-flex gap-2">
-        <textarea id="message" class="form-control" placeholder="Type your question..." autocomplete="off" required rows="1" style="resize:none; min-height:38px; overflow-y:hidden;"></textarea>
-        <button class="btn btn-primary" type="submit">Send</button>
-    </form>
-    <div class="d-flex align-items-center gap-2 mt-2">
-        <input type="checkbox" id="auto-retry" style="width:auto;">
-        <label for="auto-retry" class="mb-0">Retry sending output if connection is lost</label>
-        <button id="test-multiline" class="btn btn-secondary btn-sm ms-auto" type="button">Test multiline bot reply</button>
-    </div>
-    <noscript>
-        <div class="chat-message">
-            <div class="chat-avatar bot">Bot</div>
-            <div class="chat-content bot">
-                <p><strong>JavaScript is required:</strong> This chatbot interface will not work unless JavaScript is enabled in your browser. Please enable JavaScript to use BASA.</p>
-            </div>
+    <div class="chat-input-bar position-sticky bottom-0 start-0 w-100 bg-white border-top p-3" style="z-index: 10;">
+        <form id="chat-form" class="d-flex gap-2 mb-2">
+            <textarea id="message" class="form-control" placeholder="Type your question..." autocomplete="off" required rows="1" style="resize:none; min-height:38px; overflow-y:hidden;"></textarea>
+            <button class="btn btn-primary" type="submit">Send</button>
+        </form>
+        <div class="d-flex align-items-center gap-2">
+            <input type="checkbox" id="auto-retry" style="width:auto;">
+            <label for="auto-retry" class="mb-0">Retry sending output if connection is lost</label>
+            <button id="test-multiline" class="btn btn-secondary btn-sm ms-auto" type="button">Test multiline bot reply</button>
         </div>
-    </noscript>
+    </div>
 </div>
 @endsection
 
