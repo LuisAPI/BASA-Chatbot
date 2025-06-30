@@ -13,7 +13,6 @@
 
 @section('content')
 <div class="chat-container">
-    <h3 class="chat-title">Bot for Automated Semantic Assistance</h3>
     <div id="chat-log" class="chat-log">
         <noscript>
             <div class="chat-message">
@@ -25,14 +24,28 @@
         </noscript>
     </div>
     <div class="chat-input-bar position-sticky bottom-0 start-0 w-100 bg-white border-top p-3" style="z-index: 10;">
-        <form id="chat-form" class="d-flex gap-2 mb-2">
+        <form id="chat-form" class="d-flex gap-2 mb-2 align-items-start">
+            <div class="dropdown">
+                <button class="btn btn-primary d-flex align-items-center justify-content-center p-2" type="button" id="attachmentDropdown" data-bs-toggle="dropdown" aria-expanded="false" style="height: 38px; width: 38px;">
+                    <i class="bi bi-paperclip" style="font-size: 1.3em;"></i>
+                </button>
+                <ul class="dropdown-menu" aria-labelledby="attachmentDropdown" style="min-width: 260px;">
+                    <li><button class="dropdown-item" type="button" id="test-multiline">Test reply</button></li>
+                    <li>
+                        <div class="px-3 py-2">
+                            <label for="url-attach" class="form-label mb-1">Insert URL</label>
+                            <input type="url" class="form-control form-control-sm" id="url-attach" placeholder="https://example.com">
+                            <button class="btn btn-sm btn-primary mt-2 w-100" type="button" id="attachUrlBtn">Attach URL</button>
+                        </div>
+                    </li>
+                </ul>
+            </div>
             <textarea id="message" class="form-control" placeholder="Type your question..." autocomplete="off" required rows="1" style="resize:none; min-height:38px; overflow-y:hidden;"></textarea>
             <button class="btn btn-primary" type="submit">Send</button>
         </form>
         <div class="d-flex align-items-center gap-2">
             <input type="checkbox" id="auto-retry" style="width:auto;">
             <label for="auto-retry" class="mb-0">Retry sending output if connection is lost</label>
-            <button id="test-multiline" class="btn btn-secondary btn-sm ms-auto" type="button">Test multiline bot reply</button>
         </div>
     </div>
 </div>
@@ -136,6 +149,20 @@ document.getElementById('test-multiline').addEventListener('click', function() {
         'This is a test of multi-line bot output.\n\nHere is a new paragraph.\nLine two of the same paragraph.\n\nAnother paragraph follows.\n\n- Bullet 1\n- Bullet 2',
         'bot'
     );
+});
+
+// Attachments dropdown logic
+const urlAttachInput = document.getElementById('url-attach');
+const attachUrlBtn = document.getElementById('attachUrlBtn');
+
+attachUrlBtn && attachUrlBtn.addEventListener('click', function() {
+    if (urlAttachInput && urlAttachInput.value.trim()) {
+        messageInput.value = urlAttachInput.value.trim() + (messageInput.value ? ('\n' + messageInput.value) : '');
+        urlAttachInput.value = '';
+        // Optionally close dropdown
+        document.body.click(); // closes any open dropdown
+        messageInput.focus();
+    }
 });
 </script>
 @endsection
