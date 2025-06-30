@@ -1,0 +1,17 @@
+{
+  "name": "DEPDev BASA",
+  "short_name": "BASA",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#0e4384",
+  "description": "Bot for Automated Semantic Assistance by DEPDev.",
+  "icons": [
+    {
+      "src": "/icons/chatbot-logo-app.png",
+      "sizes": "1024x1024",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
