@@ -22,7 +22,7 @@
 .chat-content { background: #f4f6f8; border-radius: 8px; padding: 12px 16px; white-space: pre-line; font-size: 1.05em; flex: 1; }
 .chat-content.user { background: #e3f2fd; }
 .chat-content.bot { background: #e8f5e9; }
-.chat-log { display: flex; flex-direction: column; gap: 0; min-height: 200px; margin-bottom: 16px; }
+.chat-log { display: flex; flex-direction: column; gap: 0; min-height: 15rem; margin-bottom: 16px; }
 .loading-dots {
     display: flex;
     align-items: center;
@@ -76,14 +76,26 @@
     border-color: #09305c !important;
 }
 
-/* Override Bootstrap navbar brand class to remove excess right margin */
-.navbar-brand {
-    margin-right: 0 !important;
-}
-
 /* White hamburger icon for dark backgrounds */
 .btn-primary .navbar-toggler-icon,
 .btn-primary:focus .navbar-toggler-icon,
 .btn-primary:active .navbar-toggler-icon {
     background-image: url("data:image/svg+xml;charset=utf8,%3Csvg viewBox='0 0 30 30' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath stroke='rgba(255,255,255,0.95)' stroke-width='2' stroke-linecap='round' stroke-miterlimit='10' d='M4 7h22M4 15h22M4 23h22'/%3E%3C/svg%3E");
+}
+
+/* Override Bootstrap navbar brand class to remove excess right margin */
+.navbar-brand {
+    margin-right: 0 !important;
+}
+
+.text-secondary {
+    padding: 8;
+}
+
+/* Stylize the navbar text to replicate DEPDev wordmark font */
+.navbar-text {
+    font-family: 'Georgia', 'Times New Roman', Times, serif;
+    font-variant: small-caps;
+    font-weight: 600;
+    color: #0e4384;
 }

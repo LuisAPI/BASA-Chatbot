@@ -4,6 +4,8 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
+use fivefilters\Readability\Readability;
+use fivefilters\Readability\Configuration;
 
 class ChatbotController extends Controller
 {
@@ -66,6 +68,63 @@ class ChatbotController extends Controller
         // Validate the user message length
         if (strlen($userMessage) > 500) {
             return response()->json(['error' => 'Message is too long. Maximum length is 500 characters.'], 400);
+        }
+
+        // Check if the user message contains a URL (with or without a question)
+        $url = null;
+        $question = null;
+        if (preg_match('/(https?:\/\/[^\s]+)/i', $userMessage, $matches)) {
+            $url = $matches[1];
+            $question = trim(str_replace($url, '', $userMessage));
+            if (empty($question)) {
+                $question = 'Summarize the following webpage.';
+            }
+            // Check robots.txt before fetching
+            $parsedUrl = parse_url($url);
+            $robotsUrl = $parsedUrl['scheme'] . '://' . $parsedUrl['host'] . '/robots.txt';
+            try {
+                $robotsResponse = Http::timeout(5)->get($robotsUrl);
+                $robotsTxt = $robotsResponse->successful() ? $robotsResponse->body() : '';
+                $isAllowed = true;
+                if ($robotsTxt) {
+                    $lines = preg_split('/\r?\n/', $robotsTxt);
+                    $userAgent = false;
+                    foreach ($lines as $line) {
+                        $line = trim($line);
+                        if (stripos($line, 'User-agent:') === 0) {
+                            $userAgent = (stripos($line, 'User-agent: *') === 0);
+                        } elseif ($userAgent && stripos($line, 'Disallow:') === 0) {
+                            $disallowedPath = trim(substr($line, 9));
+                            if ($disallowedPath && strpos($parsedUrl['path'] ?? '/', $disallowedPath) === 0) {
+                                $isAllowed = false;
+                                break;
+                            }
+                        } elseif (stripos($line, 'User-agent:') === 0) {
+                            $userAgent = false;
+                        }
+                    }
+                }
+                if (!$isAllowed) {
+                    return response()->json(['reply' => 'Sorry, I am not allowed to access this page due to the site\'s robots.txt rules.']);
+                }
+            } catch (\Exception $e) {
+                // If robots.txt fails, proceed (fail open, but could be changed to fail closed)
+            }
+            try {
+                $webResponse = Http::timeout(10)->get($url);
+                $html = $webResponse->body();
+                $readability = new Readability(new Configuration());
+                $readability->parse($html);
+                $content = $readability->getContent();
+                $title = $readability->getTitle();
+                $content = strip_tags($content);
+                if (strlen($content) > 4000) {
+                    $content = substr($content, 0, 1000) . '... [truncated]';
+                }
+                $userMessage = $question . " Title: $title. Content: $content";
+            } catch (\Exception $e) {
+                return response()->json(['reply' => 'Sorry, I could not fetch or process the webpage.']);
+            }
         }
 
         // Prepare the full prompt for the model
