@@ -111,7 +111,9 @@ class ChatbotController extends Controller
                 // If robots.txt fails, proceed (fail open, but could be changed to fail closed)
             }
             try {
-                $webResponse = Http::timeout(10)->get($url);
+                $webResponse = Http::timeout(10)
+                    ->withHeaders(['User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'])
+                    ->get($url);
                 $html = $webResponse->body();
                 $readability = new Readability(new Configuration());
                 $readability->parse($html);
