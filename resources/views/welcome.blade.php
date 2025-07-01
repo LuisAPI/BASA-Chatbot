@@ -1,6 +1,6 @@
 @extends('layouts.app')
 
-@section('title', 'Welcome to BASA by DEPDev')
+@section('title', 'Welcome')
 
 @section('content')
 <div class="container py-5">

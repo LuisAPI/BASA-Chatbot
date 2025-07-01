@@ -38,6 +38,13 @@
                             <button class="btn btn-sm btn-primary mt-2 w-100" type="button" id="attachUrlBtn">Attach URL</button>
                         </div>
                     </li>
+                    <li>
+                        <div class="px-3 py-2">
+                            <label for="file-attach" class="form-label mb-1">Upload File</label>
+                            <input type="file" class="form-control form-control-sm" id="file-attach" accept=".txt,.pdf,.doc,.docx,.rtf,.odt,.csv,.xlsx,.xls">
+                            <button class="btn btn-sm btn-primary mt-2 w-100" type="button" id="attachFileBtn">Attach File</button>
+                        </div>
+                    </li>
                 </ul>
             </div>
             <textarea id="message" class="form-control" placeholder="Type your question..." autocomplete="off" required rows="1" style="resize:none; min-height:38px; overflow-y:hidden;"></textarea>
@@ -157,12 +164,43 @@ document.getElementById('test-multiline').addEventListener('click', function() {
 // Attachments dropdown logic
 const urlAttachInput = document.getElementById('url-attach');
 const attachUrlBtn = document.getElementById('attachUrlBtn');
+const fileAttachInput = document.getElementById('file-attach');
+const attachFileBtn = document.getElementById('attachFileBtn');
 
 attachUrlBtn && attachUrlBtn.addEventListener('click', function() {
     if (urlAttachInput && urlAttachInput.value.trim()) {
         messageInput.value = urlAttachInput.value.trim() + (messageInput.value ? ('\n' + messageInput.value) : '');
         urlAttachInput.value = '';
         // Optionally close dropdown
+        document.body.click(); // closes any open dropdown
+        messageInput.focus();
+    }
+});
+
+attachFileBtn && attachFileBtn.addEventListener('click', function() {
+    if (fileAttachInput && fileAttachInput.files.length > 0) {
+        const file = fileAttachInput.files[0];
+        const formData = new FormData();
+        formData.append('file', file);
+        // Optionally, add a message/question
+        if (messageInput.value.trim()) {
+            formData.append('message', messageInput.value.trim());
+        }
+        fetch('/chatbot/upload', {
+            method: 'POST',
+            headers: {
+                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+            },
+            body: formData
+        })
+        .then(response => response.json())
+        .then(data => {
+            addMessage(data.reply, 'bot');
+        })
+        .catch(() => {
+            addMessage('Error: Could not upload or process the file.', 'bot', true);
+        });
+        fileAttachInput.value = '';
         document.body.click(); // closes any open dropdown
         messageInput.focus();
     }
