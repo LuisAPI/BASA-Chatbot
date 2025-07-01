@@ -18,10 +18,10 @@ BASA is an internal chatbot for the Philippine Department of Economy, Planning a
 2. Copy `.env.example` to `.env` and configure as needed.
 3. Start the Laravel server:
    ```sh
-   php artisan serve
+   php artisan serve --port=8080
    ```
 4. Start Ollama and ensure your chosen model (e.g., phi, tinyllama) is available.
-5. Access BASA at [http://localhost:8000/chatbot](http://localhost:8000/chatbot)
+5. Access BASA at [http://localhost:8080/chatbot](http://localhost:8080/chatbot)
 
 ## About
 BASA (Bot for Automated Semantic Assistance) is designed for internal use by DEPDev employees, providing fast, reliable, and contextually relevant answers about the agency's functions, services, and structure.
