@@ -24,6 +24,8 @@
         </noscript>
     </div>
     <div class="chat-input-bar position-sticky bottom-0 start-0 w-100 bg-white border-top p-3" style="z-index: 10;">
+        <!-- File pill UI -->
+        <div id="file-pill-container" class="mb-2" style="display:none;"></div>
         <form id="chat-form" class="d-flex gap-2 mb-2 align-items-start">
             <div class="dropdown">
                 <button class="btn btn-primary d-flex align-items-center justify-content-center p-2" type="button" id="attachmentDropdown" data-bs-toggle="dropdown" aria-expanded="false" style="height: 38px; width: 38px;">
@@ -67,6 +69,7 @@ const chatLog = document.getElementById('chat-log');
 const chatForm = document.getElementById('chat-form');
 const messageInput = document.getElementById('message');
 const autoRetry = document.getElementById('auto-retry');
+const filePillContainer = document.getElementById('file-pill-container');
 
 function addMessage(text, sender, isError = false, retryCallback = null, isLoading = false) {
     const msgDiv = document.createElement('div');
@@ -247,12 +250,9 @@ attachUrlBtn && attachUrlBtn.addEventListener('click', function() {
 attachFileBtn && attachFileBtn.addEventListener('click', function() {
     if (fileAttachInput && fileAttachInput.files.length > 0) {
         const file = fileAttachInput.files[0];
-        const formData = new FormData();
-        formData.append('file', file);
-        // Optionally, add a message/question
-        if (messageInput.value.trim()) {
-            formData.append('message', messageInput.value.trim());
-        }
+        // Show file pill UI
+        showFilePill(file);
+        // ...existing code...
         fetch('/chatbot/upload', {
             method: 'POST',
             headers: {
@@ -263,14 +263,41 @@ attachFileBtn && attachFileBtn.addEventListener('click', function() {
         .then(response => response.json())
         .then(data => {
             addMessage(data.reply, 'bot');
+            clearFilePill();
         })
         .catch(() => {
             addMessage('Error: Could not upload or process the file.', 'bot', true);
+            clearFilePill();
         });
         fileAttachInput.value = '';
         document.body.click(); // closes any open dropdown
         messageInput.focus();
     }
 });
+
+function showFilePill(file) {
+    filePillContainer.innerHTML = '';
+    const pill = document.createElement('span');
+    pill.className = 'badge rounded-pill bg-info text-dark d-inline-flex align-items-center px-3 py-2';
+    pill.style.fontSize = '1em';
+    pill.textContent = file.name;
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'btn-close ms-2';
+    removeBtn.style.fontSize = '0.9em';
+    removeBtn.setAttribute('aria-label', 'Remove');
+    removeBtn.onclick = function() {
+        clearFilePill();
+        fileAttachInput.value = '';
+    };
+    pill.appendChild(removeBtn);
+    filePillContainer.appendChild(pill);
+    filePillContainer.style.display = '';
+}
+
+function clearFilePill() {
+    filePillContainer.innerHTML = '';
+    filePillContainer.style.display = 'none';
+}
 </script>
 @endsection
