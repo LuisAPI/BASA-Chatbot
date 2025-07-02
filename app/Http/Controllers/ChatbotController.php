@@ -8,6 +8,7 @@ use App\Services\VectorSearchService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use App\Jobs\ProcessFileForRAG;
 
 class ChatbotController extends Controller
 {
@@ -56,53 +57,16 @@ class ChatbotController extends Controller
 
     public function upload(Request $request)
     {
+        Log::info('TEST LOG: upload() called');
         if (!$request->hasFile('file')) {
             return response()->json(['reply' => 'No file uploaded.'], 400);
         }
         $file = $request->file('file');
         $content = $this->parseUploadedFile($file);
-        $userMessage = $request->input('message', '');
-        // --- RAG logic ---
-        $chunker = new Chunker();
-        $embedder = new EmbeddingService();
-        $vectorSearch = new VectorSearchService();
-        $chunks = $chunker->chunkText($content);
-        $source = $file->getClientOriginalName();
-        $topChunks = [];
-        // Store chunks and embeddings
-        foreach ($chunks as $chunk) {
-            $embedding = $embedder->getEmbedding($chunk);
-            if ($embedding) {
-                $vectorSearch->storeChunk($source, $chunk, $embedding);
-            }
-        }
-        // Embed the user query
-        $queryEmbedding = $embedder->getEmbedding($userMessage);
-        if ($queryEmbedding) {
-            $topChunks = $vectorSearch->searchSimilar($queryEmbedding, 3);
-        }
-        $context = '';
-        foreach ($topChunks as $c) {
-            $context .= $c['chunk'] . "\n---\n";
-        }
-        $prompt = <<<EOT
-You are given relevant excerpts from a file. Use these to answer the user's query as best as possible.
-
-User's query:
-{$userMessage}
-
-Relevant file excerpts:
-{$context}
-EOT;
-        if (strlen($prompt) > 4000) {
-            $prompt = substr($prompt, 0, 4000) . '... [truncated]';
-        }
-        Log::info('LLM Prompt (file upload, RAG):', ['prompt' => $prompt]);
-        if (filter_var(env('APP_DEBUG', false), FILTER_VALIDATE_BOOLEAN)) {
-            return response()->json(['reply' => "[DEBUG PROMPT OUTPUT]\n" . $prompt]);
-        }
-        $botReply = $this->sendToLLM($prompt);
-        return response()->json(['reply' => $botReply]);
+        $fileName = $file->getClientOriginalName();
+        // Dispatch background job for chunking/embedding
+        ProcessFileForRAG::dispatch($content, $fileName);
+        return response()->json(['reply' => 'File is being processed. You will be notified when it is ready.', 'file' => $fileName]);
     }
 
     /**

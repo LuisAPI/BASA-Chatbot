@@ -12,6 +12,7 @@
         "laravel/tinker": "^2.10.1",
         "phpoffice/phpspreadsheet": "^4.4",
         "phpoffice/phpword": "^1.4",
+        "pusher/pusher-php-server": "^7.2",
         "smalot/pdfparser": "^2.12"
     },
     "require-dev": {

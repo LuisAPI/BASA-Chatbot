@@ -60,6 +60,7 @@
     <div class="basa-disclaimer-bar w-100 bg-light text-center py-2 small text-muted" style="position: sticky; bottom: 0; left: 0; z-index: 9; border-top: 1px solid #e0e0e0;">
         BASA can make mistakes in providing information. Please check carefully.
     </div>
+    <div id="processing-files" class="mb-2"></div>
 </div>
 @endsection
 
@@ -70,6 +71,7 @@ const chatForm = document.getElementById('chat-form');
 const messageInput = document.getElementById('message');
 const autoRetry = document.getElementById('auto-retry');
 const filePillContainer = document.getElementById('file-pill-container');
+const processingFilesDiv = document.getElementById('processing-files');
 
 function addMessage(text, sender, isError = false, retryCallback = null, isLoading = false) {
     const msgDiv = document.createElement('div');
@@ -250,9 +252,16 @@ attachUrlBtn && attachUrlBtn.addEventListener('click', function() {
 attachFileBtn && attachFileBtn.addEventListener('click', function() {
     if (fileAttachInput && fileAttachInput.files.length > 0) {
         const file = fileAttachInput.files[0];
+        showFileProcessing(file.name);
         // Show file pill UI
         showFilePill(file);
-        // ...existing code...
+        const formData = new FormData();
+        formData.append('file', file);
+        // Optionally, add the message as well
+        const msg = messageInput.value.trim();
+        if (msg) {
+            formData.append('message', msg);
+        }
         fetch('/chatbot/upload', {
             method: 'POST',
             headers: {
@@ -298,6 +307,31 @@ function showFilePill(file) {
 function clearFilePill() {
     filePillContainer.innerHTML = '';
     filePillContainer.style.display = 'none';
+}
+
+// Listen for file processing events (using Laravel Echo)
+if (window.Echo) {
+    Echo.channel('files')
+        .listen('.FileProcessed', (e) => {
+            showFileProcessed(e.fileName);
+        });
+}
+
+function showFileProcessing(fileName) {
+    let div = document.createElement('div');
+    div.className = 'alert alert-info d-flex align-items-center mb-2';
+    div.id = 'processing-' + fileName;
+    div.innerHTML = `<span class="spinner-border spinner-border-sm me-2"></span>Processing <strong>${fileName}</strong>...`;
+    processingFilesDiv.appendChild(div);
+}
+
+function showFileProcessed(fileName) {
+    let div = document.getElementById('processing-' + fileName);
+    if (div) {
+        div.className = 'alert alert-success d-flex align-items-center mb-2';
+        div.innerHTML = `<span class="bi bi-check-circle-fill text-success me-2"></span>File <strong>${fileName}</strong> is ready for use.`;
+        setTimeout(() => div.remove(), 5000);
+    }
 }
 </script>
 @endsection
