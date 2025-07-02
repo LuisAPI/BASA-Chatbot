@@ -131,6 +131,72 @@ async function sendMessage(msg) {
     }
 }
 
+async function streamMessage(msg) {
+    // Add a placeholder bot message to the chat UI and get its DOM element
+    const msgDiv = document.createElement('div');
+    msgDiv.className = 'chat-message';
+    const avatar = document.createElement('div');
+    avatar.className = 'chat-avatar bot';
+    avatar.textContent = 'Bot';
+    const content = document.createElement('div');
+    content.className = 'chat-content bot';
+    content.innerHTML = '<span class="loading-dots"><span></span><span></span><span></span></span>';
+    msgDiv.appendChild(avatar);
+    msgDiv.appendChild(content);
+    chatLog.appendChild(msgDiv);
+    chatLog.scrollTop = chatLog.scrollHeight;
+
+    const response = await fetch('/chatbot/stream', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+        },
+        body: JSON.stringify({ message: msg })
+    });
+
+    if (!response.ok || !response.body) {
+        content.textContent = 'Error: Could not get response.';
+        return;
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let result = '';
+    let done, value;
+    content.innerHTML = '';
+    try {
+        while (true) {
+            ({ done, value } = await reader.read());
+            if (done) break;
+            const chunk = decoder.decode(value, { stream: true });
+            result += chunk;
+            content.textContent = result;
+            chatLog.scrollTop = chatLog.scrollHeight;
+        }
+        if (!result.trim()) {
+            content.textContent = 'No response from model.';
+        }
+    } catch (err) {
+        content.textContent = 'Error: Could not get response.';
+    }
+}
+
+async function handleBotReply(msg) {
+    // Ask backend if streaming is enabled
+    const resp = await fetch('/chatbot/streaming-enabled', { method: 'GET' });
+    let isStreaming = false;
+    if (resp.ok) {
+        const data = await resp.json();
+        isStreaming = !!data.streaming;
+    }
+    if (isStreaming) {
+        await streamMessage(msg);
+    } else {
+        await sendMessage(msg);
+    }
+}
+
 // Auto-expand textarea height on input
 messageInput.addEventListener('input', function() {
     this.style.height = 'auto';
@@ -151,7 +217,8 @@ chatForm.addEventListener('submit', function(e) {
     if (!msg) return;
     addMessage(msg, 'user');
     messageInput.value = '';
-    sendMessage(msg);
+    // Use streaming or fallback to normal reply
+    handleBotReply(msg);
 });
 
 document.getElementById('test-multiline').addEventListener('click', function() {
