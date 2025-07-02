@@ -108,24 +108,105 @@ EOT;
 
     /**
      * Send a prompt to the LLM and return the response.
+     * If streaming is enabled, handle streamed responses.
      */
     private function sendToLLM(string $prompt, ?string $systemPrompt = null): string
     {
         $systemPrompt = $systemPrompt ?? $this->getSystemPrompt();
-        $response = \Illuminate\Support\Facades\Http::timeout(60)->post('http://127.0.0.1:11434/api/generate', [
-            'model' => 'tinyllama',
-            'system' => $systemPrompt,
-            'prompt' => $prompt,
-            'stream' => false
-        ]);
-        $data = $response->json();
-        $botReply = $data['response'] ?? 'No response from model.';
+        $model = env('LLM_MODEL', 'tinyllama');
+        $stream = filter_var(env('LLM_STREAM', false), FILTER_VALIDATE_BOOLEAN);
+        if (!$stream) {
+            $response = \Illuminate\Support\Facades\Http::timeout(60)->post('http://127.0.0.1:11434/api/generate', [
+                'model' => $model,
+                'system' => $systemPrompt,
+                'prompt' => $prompt,
+                'stream' => false
+            ]);
+            $data = $response->json();
+            $botReply = $data['response'] ?? 'No response from model.';
+        } else {
+            // Streaming mode: collect tokens as they arrive
+            $botReply = '';
+            $client = new \GuzzleHttp\Client(['timeout' => 65]);
+            $res = $client->post('http://127.0.0.1:11434/api/generate', [
+                'json' => [
+                    'model' => $model,
+                    'system' => $systemPrompt,
+                    'prompt' => $prompt,
+                    'stream' => true
+                ],
+                'stream' => true
+            ]);
+            $body = $res->getBody();
+            while (!$body->eof()) {
+                $line = trim($body->read(4096));
+                if ($line) {
+                    // Each line is a JSON object with a 'response' key
+                    $json = json_decode($line, true);
+                    if (isset($json['response'])) {
+                        $botReply .= $json['response'];
+                    }
+                }
+            }
+        }
         $botReply = preg_replace('/^\s*Assistant:\s*/i', '', $botReply);
         $botReply = preg_replace_callback('/([.!?]\s+|^)([a-z])/', function ($matches) {
             return $matches[1] . strtoupper($matches[2]);
         }, $botReply);
         $botReply = preg_replace("/(\r?\n){2,}/", "\n\n", $botReply);
         return trim($botReply);
+    }
+
+    /**
+     * Stream LLM response to the frontend as tokens arrive.
+     */
+    public function streamLLM(Request $request)
+    {
+        $prompt = $request->input('message');
+        $systemPrompt = $this->getSystemPrompt();
+        $model = env('LLM_MODEL', 'tinyllama');
+        return response()->stream(function () use ($prompt, $systemPrompt, $model) {
+            $client = new \GuzzleHttp\Client(['timeout' => 65]);
+            $res = $client->post('http://127.0.0.1:11434/api/generate', [
+                'json' => [
+                    'model' => $model,
+                    'system' => $systemPrompt,
+                    'prompt' => $prompt,
+                    'stream' => true
+                ],
+                'stream' => true
+            ]);
+            $body = $res->getBody();
+            $buffer = '';
+            while (!$body->eof()) {
+                $buffer .= $body->read(4096);
+                while (($pos = strpos($buffer, "\n")) !== false) {
+                    $line = trim(substr($buffer, 0, $pos));
+                    $buffer = substr($buffer, $pos + 1);
+                    if ($line) {
+                        $json = json_decode($line, true);
+                        if (isset($json['response'])) {
+                            echo $json['response'];
+                            ob_flush();
+                            flush();
+                        }
+                    }
+                }
+            }
+        }, 200, [
+            'Content-Type' => 'text/event-stream',
+            'Cache-Control' => 'no-cache',
+            'X-Accel-Buffering' => 'no'
+        ]);
+    }
+
+    /**
+     * Endpoint to let frontend know if streaming is enabled.
+     */
+    public function streamingEnabled()
+    {
+        $stream = filter_var(env('LLM_STREAM', false), FILTER_VALIDATE_BOOLEAN);
+        return response()->json(['streaming' => $stream]);
     }
 
     /**
