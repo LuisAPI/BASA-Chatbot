@@ -10,3 +10,6 @@ Route::get('/', function () {
 Route::get('/chatbot', [ChatbotController::class, 'index']);
 Route::get('/chatbot/ask', [ChatbotController::class, 'ask']);
 Route::post('/chatbot/ask', [ChatbotController::class, 'ask']);
+
+// File upload for chatbot
+Route::post('/chatbot/upload', [App\Http\Controllers\ChatbotController::class, 'upload']);
