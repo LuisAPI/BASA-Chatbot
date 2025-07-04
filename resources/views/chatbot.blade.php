@@ -137,20 +137,8 @@ async function sendMessage(msg) {
 }
 
 async function streamMessage(msg) {
-    // Add a placeholder bot message to the chat UI and get its DOM element
-    const msgDiv = document.createElement('div');
-    msgDiv.className = 'chat-message';
-    const avatar = document.createElement('div');
-    avatar.className = 'chat-avatar bot';
-    avatar.textContent = 'Bot';
-    const content = document.createElement('div');
-    content.className = 'chat-content bot';
-    content.innerHTML = '<span class="loading-dots"><span></span><span></span><span></span></span>';
-    msgDiv.appendChild(avatar);
-    msgDiv.appendChild(content);
-    chatLog.appendChild(msgDiv);
-    chatLog.scrollTop = chatLog.scrollHeight;
-
+    let retryCallback = () => streamMessage(msg);
+    addMessage('', 'bot', false, null, true);
     const response = await fetch('/chatbot/stream', {
         method: 'POST',
         headers: {
@@ -159,31 +147,50 @@ async function streamMessage(msg) {
         },
         body: JSON.stringify({ message: msg })
     });
-
+    chatLog.removeChild(chatLog.lastChild);
     if (!response.ok || !response.body) {
-        content.textContent = 'Error: Could not get response.';
+        addMessage('Error: Could not get response.', 'bot', true, retryCallback);
+        if (autoRetry.checked) {
+            setTimeout(() => streamMessage(msg), 1000);
+        }
         return;
     }
-
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let result = '';
     let done, value;
-    content.innerHTML = '';
+    let hadError = false;
     try {
         while (true) {
             ({ done, value } = await reader.read());
             if (done) break;
             const chunk = decoder.decode(value, { stream: true });
             result += chunk;
-            content.textContent = result;
+            // Update the bot message in the UI
+            if (chatLog.lastChild && chatLog.lastChild.classList.contains('chat-message') && chatLog.lastChild.querySelector('.chat-avatar.bot')) {
+                chatLog.lastChild.querySelector('.chat-content.bot').textContent = result;
+            } else {
+                // If for some reason the last message is not the bot, add a new one
+                addMessage(result, 'bot');
+            }
             chatLog.scrollTop = chatLog.scrollHeight;
         }
         if (!result.trim()) {
-            content.textContent = 'No response from model.';
+            addMessage('No response from model.', 'bot', true, retryCallback);
+            if (autoRetry.checked) {
+                setTimeout(() => streamMessage(msg), 1000);
+            }
+        } else {
+            // Finalize the message with addMessage to standardize formatting
+            chatLog.removeChild(chatLog.lastChild);
+            addMessage(result, 'bot');
         }
     } catch (err) {
-        content.textContent = 'Error: Could not get response.';
+        hadError = true;
+        addMessage('Error: Could not get response.', 'bot', true, retryCallback);
+        if (autoRetry.checked) {
+            setTimeout(() => streamMessage(msg), 1000);
+        }
     }
 }
 
@@ -253,15 +260,20 @@ attachFileBtn && attachFileBtn.addEventListener('click', function() {
     if (fileAttachInput && fileAttachInput.files.length > 0) {
         const file = fileAttachInput.files[0];
         showFileProcessing(file.name);
-        // Show file pill UI
         showFilePill(file);
         const formData = new FormData();
         formData.append('file', file);
-        // Optionally, add the message as well
         const msg = messageInput.value.trim();
         if (msg) {
             formData.append('message', msg);
         }
+        let uploadTimedOut = false;
+        const uploadTimeout = setTimeout(() => {
+            uploadTimedOut = true;
+            clearFilePill();
+            removeFileProcessing(file.name);
+            addMessage('Error: File upload timed out. Please try again.', 'bot', true);
+        }, 60000); // 60s timeout
         fetch('/chatbot/upload', {
             method: 'POST',
             headers: {
@@ -269,17 +281,26 @@ attachFileBtn && attachFileBtn.addEventListener('click', function() {
             },
             body: formData
         })
-        .then(response => response.json())
+        .then(response => {
+            clearTimeout(uploadTimeout);
+            if (uploadTimedOut) return;
+            if (!response.ok) throw new Error('Upload failed');
+            return response.json();
+        })
         .then(data => {
+            if (uploadTimedOut) return;
             addMessage(data.reply, 'bot');
             clearFilePill();
         })
         .catch(() => {
+            clearTimeout(uploadTimeout);
+            if (uploadTimedOut) return;
             addMessage('Error: Could not upload or process the file.', 'bot', true);
             clearFilePill();
+            removeFileProcessing(file.name);
         });
         fileAttachInput.value = '';
-        document.body.click(); // closes any open dropdown
+        document.body.click();
         messageInput.focus();
     }
 });
@@ -332,6 +353,11 @@ function showFileProcessed(fileName) {
         div.innerHTML = `<span class="bi bi-check-circle-fill text-success me-2"></span>File <strong>${fileName}</strong> is ready for use.`;
         setTimeout(() => div.remove(), 5000);
     }
+}
+
+function removeFileProcessing(fileName) {
+    let div = document.getElementById('processing-' + fileName);
+    if (div) div.remove();
 }
 </script>
 @endsection

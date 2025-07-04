@@ -62,10 +62,13 @@ class ChatbotController extends Controller
             return response()->json(['reply' => 'No file uploaded.'], 400);
         }
         $file = $request->file('file');
-        $content = $this->parseUploadedFile($file);
         $fileName = $file->getClientOriginalName();
-        // Dispatch background job for chunking/embedding
-        ProcessFileForRAG::dispatch($content, $fileName);
+        $storagePath = $file->storeAs('uploads', uniqid() . '_' . $fileName, 'local');
+        if (!$storagePath) {
+            return response()->json(['reply' => 'Failed to save uploaded file.'], 500);
+        }
+        // Dispatch background job for parsing, chunking, embedding
+        ProcessFileForRAG::dispatch($storagePath, $fileName);
         return response()->json(['reply' => 'File is being processed. You will be notified when it is ready.', 'file' => $fileName]);
     }
 
@@ -277,64 +280,5 @@ EOT;
         } catch (\Exception $e) {
             return ['error' => 'Sorry, I could not fetch or process the webpage.'];
         }
-    }
-
-    /**
-     * Parse uploaded file and return extracted text content.
-     */
-    private function parseUploadedFile($file): string
-    {
-        $ext = strtolower($file->getClientOriginalExtension());
-        $content = '';
-        if (in_array($ext, ['txt', 'csv', 'rtf', 'odt'])) {
-            $content = file_get_contents($file->getRealPath());
-        } elseif ($ext === 'pdf') {
-            try {
-                $parser = new \Smalot\PdfParser\Parser();
-                $pdf = $parser->parseFile($file->getRealPath());
-                $content = $pdf->getText();
-            } catch (\Exception $e) {
-                $content = '[PDF parsing failed: ' . $e->getMessage() . ']';
-            }
-        } elseif (in_array($ext, ['doc', 'docx'])) {
-            try {
-                $phpWord = \PhpOffice\PhpWord\IOFactory::load($file->getRealPath());
-                $text = '';
-                foreach ($phpWord->getSections() as $section) {
-                    $elements = $section->getElements();
-                    foreach ($elements as $element) {
-                        if ($element instanceof \PhpOffice\PhpWord\Element\Text) {
-                            $text .= $element->getText() . "\n";
-                        } elseif ($element instanceof \PhpOffice\PhpWord\Element\TextRun) {
-                            foreach ($element->getElements() as $subElement) {
-                                if ($subElement instanceof \PhpOffice\PhpWord\Element\Text) {
-                                    $text .= $subElement->getText();
-                                }
-                            }
-                            $text .= "\n";
-                        }
-                    }
-                }
-                $content = $text;
-            } catch (\Exception $e) {
-                $content = '[DOC/DOCX parsing failed: ' . $e->getMessage() . ']';
-            }
-        } elseif (in_array($ext, ['xlsx', 'xls'])) {
-            try {
-                $spreadsheet = \PhpOffice\PhpSpreadsheet\IOFactory::load($file->getRealPath());
-                $sheet = $spreadsheet->getActiveSheet();
-                $rows = $sheet->toArray();
-                $lines = array();
-                foreach ($rows as $row) {
-                    $lines[] = implode("\t", $row);
-                }
-                $content = implode("\n", $lines);
-            } catch (\Exception $e) {
-                $content = '[Excel parsing failed: ' . $e->getMessage() . ']';
-            }
-        } else {
-            $content = '[Unsupported file type]';
-        }
-        return $content;
     }
 }
