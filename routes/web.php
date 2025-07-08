@@ -2,6 +2,8 @@
 
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\ChatbotController;
+use App\Events\FileProcessed;
+use App\Events\FileFailed;
 
 Route::get('/', function () {
     return view('welcome');
@@ -19,3 +21,12 @@ Route::post('/chatbot/stream', [App\Http\Controllers\ChatbotController::class, '
 
 // Endpoint for frontend to check if streaming is enabled
 Route::get('/chatbot/streaming-enabled', [App\Http\Controllers\ChatbotController::class, 'streamingEnabled']);
+
+Route::get('/test-broadcast', function () {
+    event(new FileProcessed('test.txt'));
+    return 'Sent';
+});
+Route::get('/test-broadcast-fail', function () {
+    event(new FileFailed('test.txt', 'This is a test error'));
+    return 'Sent';
+});

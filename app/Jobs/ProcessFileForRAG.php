@@ -92,6 +92,11 @@ class ProcessFileForRAG implements ShouldQueue
                     $vectorSearch->storeChunk($this->fileName, $chunk, $embedding);
                 }
             }
+            
+            // Log the successful processing
+            // Log::info('📦 Dispatching FileProcessed event for: ' . $this->fileName);
+
+            // Dispatch the event after processing
             event(new FileProcessed($this->fileName));
         } catch (\Exception $e) {
             event(new \App\Events\FileFailed($this->fileName, $e->getMessage()));

@@ -62,7 +62,11 @@ php artisan queue:work
 
 ```sh
 php artisan serve --port=8080
+php artisan reverb:start
 ```
+
+- `php artisan serve --port=8080` starts the Laravel web server.
+- `php artisan reverb:start` starts the Reverb WebSocket server for real-time features (such as chat updates and notifications).
 
 Start Ollama and make sure both your chat model and embedding model are installed and running:
 
@@ -91,7 +95,7 @@ These packages were added for file parsing and RAG support:
 
 ## About
 
-BASA (Bot for Automated Semantic Assistance) is designed for internal use by DEPDev employees, providing fast, reliable, and contextually relevant answers about the agency's functions, services, and structure. It leverages local language models via Ollama and Laravel’s elegant ecosystem.
+BASA (Bot for Automated Semantic Assistance) is designed for internal use by DEPDev employees, providing fast, reliable, and contextually relevant answers about the agency's functions, services, and structure. It leverages local language models via Ollama and Laravel's elegant ecosystem.
 
 ---
 
