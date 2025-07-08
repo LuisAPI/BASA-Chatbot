@@ -1,5 +1,7 @@
 <?php
 
+// File: app/Jobs/ProcessFileForRAG.php
+
 namespace App\Jobs;
 
 use App\Services\Chunker;
@@ -92,7 +94,7 @@ class ProcessFileForRAG implements ShouldQueue
             }
             event(new FileProcessed($this->fileName));
         } catch (\Exception $e) {
-            event(new FileProcessed($this->fileName . ' (error: ' . $e->getMessage() . ')'));
+            event(new \App\Events\FileFailed($this->fileName, $e->getMessage()));
         }
     }
 }

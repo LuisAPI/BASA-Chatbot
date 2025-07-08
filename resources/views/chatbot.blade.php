@@ -1,3 +1,5 @@
+{{-- File: chatbot.blade.php --}}
+
 @extends('layouts.app')
 
 @section('title', 'Bot for Automated Semantic Assistance')
@@ -335,6 +337,9 @@ if (window.Echo) {
     Echo.channel('files')
         .listen('.FileProcessed', (e) => {
             showFileProcessed(e.fileName);
+        })
+        .listen('.FileFailed', (e) => {
+            showFileFailed(e.fileName, e.error);
         });
 }
 
@@ -342,7 +347,7 @@ function showFileProcessing(fileName) {
     let div = document.createElement('div');
     div.className = 'alert alert-info d-flex align-items-center mb-2';
     div.id = 'processing-' + fileName;
-    div.innerHTML = `<span class="spinner-border spinner-border-sm me-2"></span>Processing <strong>${fileName}</strong>...`;
+    div.innerHTML = `<span class="spinner-border spinner-border-sm me-2"></span>Processing&nbsp;<strong>${fileName}</strong>...`;
     processingFilesDiv.appendChild(div);
 }
 
@@ -353,6 +358,16 @@ function showFileProcessed(fileName) {
         div.innerHTML = `<span class="bi bi-check-circle-fill text-success me-2"></span>File <strong>${fileName}</strong> is ready for use.`;
         setTimeout(() => div.remove(), 5000);
     }
+}
+
+function showFileFailed(fileName, errorMsg) {
+    let div = document.getElementById('processing-' + fileName);
+    if (div) div.remove();
+    let errorDiv = document.createElement('div');
+    errorDiv.className = 'alert alert-danger d-flex align-items-center mb-2';
+    errorDiv.innerHTML = `<span class="bi bi-x-circle-fill text-danger me-2"></span>File <strong>${fileName}</strong> failed to process: <span class="ms-1">${errorMsg}</span>`;
+    processingFilesDiv.appendChild(errorDiv);
+    setTimeout(() => errorDiv.remove(), 10000);
 }
 
 function removeFileProcessing(fileName) {
