@@ -64,11 +64,15 @@ php artisan queue:work
 php artisan serve --port=8080
 ```
 
-Make sure Ollama is running with your chosen model:
+Start Ollama and make sure both your chat model and embedding model are installed and running:
 
 ```sh
 ollama run tinyllama
+ollama pull nomic-embed-text
 ```
+
+> `tinyllama` or similar is used for generating responses.
+> `nomic-embed-text` is used for vector embedding in RAG.
 
 Then access: [http://localhost:8080/chatbot](http://localhost:8080/chatbot)
 
