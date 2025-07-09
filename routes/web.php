@@ -2,6 +2,8 @@
 
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\ChatbotController;
+use App\Events\FileProcessed;
+use App\Events\FileFailed;
 
 Route::get('/', function () {
     return view('welcome');
@@ -19,3 +21,25 @@ Route::post('/chatbot/stream', [App\Http\Controllers\ChatbotController::class, '
 
 // Endpoint for frontend to check if streaming is enabled
 Route::get('/chatbot/streaming-enabled', [App\Http\Controllers\ChatbotController::class, 'streamingEnabled']);
+
+// Endpoint for checking file processing status (polling)
+Route::post('/chatbot/processing-status', [App\Http\Controllers\ChatbotController::class, 'processingStatus']);
+
+// Endpoint for getting RAG information
+Route::get('/chatbot/rag-info', [App\Http\Controllers\ChatbotController::class, 'getRagInfo']);
+
+// File gallery routes
+Route::get('/chatbot/files', [App\Http\Controllers\ChatbotController::class, 'fileGallery']);
+Route::post('/chatbot/file-chunks', [App\Http\Controllers\ChatbotController::class, 'getFileChunks']);
+
+// Debug RAG search
+Route::post('/chatbot/debug-rag', [App\Http\Controllers\ChatbotController::class, 'debugRagSearch']);
+
+Route::get('/test-broadcast', function () {
+    event(new FileProcessed('test.txt'));
+    return 'Sent';
+});
+Route::get('/test-broadcast-fail', function () {
+    event(new FileFailed('test.txt', 'This is a test error'));
+    return 'Sent';
+});

@@ -8,6 +8,7 @@ use App\Services\VectorSearchService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use App\Jobs\ProcessFileForRAG;
 
 class ChatbotController extends Controller
 {
@@ -50,59 +51,34 @@ class ChatbotController extends Controller
             $userMessage = $question . " Title: {$webResult['title']}. Content: {$webResult['content']}";
         }
 
-        $botReply = $this->sendToLLM($userMessage);
-        return response()->json(['reply' => $botReply]);
+        // Implement RAG: Search for relevant file content
+        $relevantContent = $this->searchRelevantFileContent($userMessage);
+        
+        $botReply = $this->sendToLLM($userMessage, null, $relevantContent);
+        
+        return response()->json([
+            'reply' => $botReply,
+            'rag_used' => !empty($relevantContent),
+            'rag_chunks_found' => count($relevantContent),
+            'rag_files' => !empty($relevantContent) ? array_unique(array_column($relevantContent, 'source')) : []
+        ]);
     }
 
     public function upload(Request $request)
     {
+        Log::info('TEST LOG: upload() called');
         if (!$request->hasFile('file')) {
             return response()->json(['reply' => 'No file uploaded.'], 400);
         }
         $file = $request->file('file');
-        $content = $this->parseUploadedFile($file);
-        $userMessage = $request->input('message', '');
-        // --- RAG logic ---
-        $chunker = new Chunker();
-        $embedder = new EmbeddingService();
-        $vectorSearch = new VectorSearchService();
-        $chunks = $chunker->chunkText($content);
-        $source = $file->getClientOriginalName();
-        $topChunks = [];
-        // Store chunks and embeddings
-        foreach ($chunks as $chunk) {
-            $embedding = $embedder->getEmbedding($chunk);
-            if ($embedding) {
-                $vectorSearch->storeChunk($source, $chunk, $embedding);
-            }
+        $fileName = $file->getClientOriginalName();
+        $storagePath = $file->storeAs('uploads', uniqid() . '_' . $fileName, 'local');
+        if (!$storagePath) {
+            return response()->json(['reply' => 'Failed to save uploaded file.'], 500);
         }
-        // Embed the user query
-        $queryEmbedding = $embedder->getEmbedding($userMessage);
-        if ($queryEmbedding) {
-            $topChunks = $vectorSearch->searchSimilar($queryEmbedding, 3);
-        }
-        $context = '';
-        foreach ($topChunks as $c) {
-            $context .= $c['chunk'] . "\n---\n";
-        }
-        $prompt = <<<EOT
-You are given relevant excerpts from a file. Use these to answer the user's query as best as possible.
-
-User's query:
-{$userMessage}
-
-Relevant file excerpts:
-{$context}
-EOT;
-        if (strlen($prompt) > 4000) {
-            $prompt = substr($prompt, 0, 4000) . '... [truncated]';
-        }
-        Log::info('LLM Prompt (file upload, RAG):', ['prompt' => $prompt]);
-        if (filter_var(env('APP_DEBUG', false), FILTER_VALIDATE_BOOLEAN)) {
-            return response()->json(['reply' => "[DEBUG PROMPT OUTPUT]\n" . $prompt]);
-        }
-        $botReply = $this->sendToLLM($prompt);
-        return response()->json(['reply' => $botReply]);
+        // Dispatch background job for parsing, chunking, embedding
+        ProcessFileForRAG::dispatch($storagePath, $fileName);
+        return response()->json(['reply' => 'File is being processed. You will be notified when it is ready.', 'file' => $fileName]);
     }
 
     /**
@@ -159,9 +135,18 @@ EOT;
      * Send a prompt to the LLM and return the response.
      * If streaming is enabled, handle streamed responses.
      */
-    private function sendToLLM(string $prompt, ?string $systemPrompt = null): string
+    private function sendToLLM(string $prompt, ?string $systemPrompt = null, ?array $relevantContent = null): string
     {
         $systemPrompt = $systemPrompt ?? $this->getSystemPrompt();
+        
+        // If we have relevant content from uploaded files, prioritize it
+        if ($relevantContent && !empty($relevantContent)) {
+            // Only use the top 2 most relevant chunks
+            $fileContext = $this->buildFileContext(array_slice($relevantContent, 0, 2));
+            // Prepend the context and a strong instruction to the user prompt
+            $prompt = "IMPORTANT: Use ONLY the following file content to answer. If the answer is not present, say 'I don't know.'\n\n" . $fileContext . "\n\nQUESTION: " . $prompt;
+        }
+        
         $model = env('LLM_MODEL', 'tinyllama');
         $stream = filter_var(env('LLM_STREAM', false), FILTER_VALIDATE_BOOLEAN);
         if (!$stream) {
@@ -214,39 +199,58 @@ EOT;
         $prompt = $request->input('message');
         $systemPrompt = $this->getSystemPrompt();
         $model = env('LLM_MODEL', 'tinyllama');
-        return response()->stream(function () use ($prompt, $systemPrompt, $model) {
-            $client = new \GuzzleHttp\Client(['timeout' => 65]);
-            $res = $client->post('http://127.0.0.1:11434/api/generate', [
-                'json' => [
-                    'model' => $model,
-                    'system' => $systemPrompt,
-                    'prompt' => $prompt,
+        
+        // Implement RAG: Search for relevant file content
+        $relevantContent = $this->searchRelevantFileContent($prompt);
+        
+        // If we have relevant content from uploaded files, prioritize it
+        if ($relevantContent && !empty($relevantContent)) {
+            // Only use the top 2 most relevant chunks
+            $fileContext = $this->buildFileContext(array_slice($relevantContent, 0, 2));
+            // Prepend the context and a strong instruction to the user prompt
+            $prompt = "IMPORTANT: Use ONLY the following file content to answer. If the answer is not present, say 'I don't know.'\n\n" . $fileContext . "\n\nQUESTION: " . $prompt;
+        }
+        
+        try {
+            return response()->stream(function () use ($prompt, $systemPrompt, $model) {
+                $client = new \GuzzleHttp\Client(['timeout' => 65]);
+                $res = $client->post('http://127.0.0.1:11434/api/generate', [
+                    'json' => [
+                        'model' => $model,
+                        'system' => $systemPrompt,
+                        'prompt' => $prompt,
+                        'stream' => true
+                    ],
                     'stream' => true
-                ],
-                'stream' => true
-            ]);
-            $body = $res->getBody();
-            $buffer = '';
-            while (!$body->eof()) {
-                $buffer .= $body->read(4096);
-                while (($pos = strpos($buffer, "\n")) !== false) {
-                    $line = trim(substr($buffer, 0, $pos));
-                    $buffer = substr($buffer, $pos + 1);
-                    if ($line) {
-                        $json = json_decode($line, true);
-                        if (isset($json['response'])) {
-                            echo $json['response'];
-                            ob_flush();
-                            flush();
+                ]);
+                $body = $res->getBody();
+                $buffer = '';
+                while (!$body->eof()) {
+                    $buffer .= $body->read(4096);
+                    while (($pos = strpos($buffer, "\n")) !== false) {
+                        $line = trim(substr($buffer, 0, $pos));
+                        $buffer = substr($buffer, $pos + 1);
+                        if ($line) {
+                            $json = json_decode($line, true);
+                            if (isset($json['response'])) {
+                                echo $json['response'];
+                                ob_flush();
+                                flush();
+                            }
                         }
                     }
                 }
-            }
-        }, 200, [
-            'Content-Type' => 'text/event-stream',
-            'Cache-Control' => 'no-cache',
-            'X-Accel-Buffering' => 'no'
-        ]);
+            }, 200, [
+                'Content-Type' => 'text/event-stream',
+                'Cache-Control' => 'no-cache',
+                'X-Accel-Buffering' => 'no'
+            ]);
+        } catch (\Exception $e) {
+            // If streaming fails, fall back to non-streaming mode
+            \Illuminate\Support\Facades\Log::error('Streaming failed, falling back to non-streaming: ' . $e->getMessage());
+            $response = $this->sendToLLM($prompt, $systemPrompt);
+            return response()->json(['reply' => $response]);
+        }
     }
 
     /**
@@ -254,8 +258,151 @@ EOT;
      */
     public function streamingEnabled()
     {
-        $stream = filter_var(env('LLM_STREAM', false), FILTER_VALIDATE_BOOLEAN);
-        return response()->json(['streaming' => $stream]);
+        return response()->json(['streaming' => filter_var(env('LLM_STREAM', false), FILTER_VALIDATE_BOOLEAN)]);
+    }
+
+    public function processingStatus(Request $request)
+    {
+        $files = $request->input('files', []);
+        $statuses = [];
+        
+        \Illuminate\Support\Facades\Log::info('Processing status check for files:', $files);
+        
+        foreach ($files as $fileName) {
+            // Check if the file has been processed by looking at the rag_chunks table
+            $chunkCount = \Illuminate\Support\Facades\DB::table('rag_chunks')
+                ->where('source', $fileName)
+                ->count();
+                
+            \Illuminate\Support\Facades\Log::info("File {$fileName}: {$chunkCount} chunks found");
+                
+            if ($chunkCount > 0) {
+                // File has been processed successfully
+                $statuses[] = [
+                    'fileName' => $fileName,
+                    'status' => 'completed',
+                    'timestamp' => now()
+                ];
+            } else {
+                // Check if there's a failed job for this file
+                $failedJob = \Illuminate\Support\Facades\DB::table('jobs')
+                    ->where('payload', 'like', '%"' . $fileName . '"%')
+                    ->where('failed_at', 'is not', null)
+                    ->first();
+                    
+                if ($failedJob) {
+                    $statuses[] = [
+                        'fileName' => $fileName,
+                        'status' => 'failed',
+                        'error' => 'Job processing failed',
+                        'timestamp' => $failedJob->failed_at
+                    ];
+                } else {
+                    // Check if there's a pending job for this file
+                    $pendingJob = \Illuminate\Support\Facades\DB::table('jobs')
+                        ->where('payload', 'like', '%"' . $fileName . '"%')
+                        ->where('failed_at', null)
+                        ->first();
+                        
+                    if ($pendingJob) {
+                        $statuses[] = [
+                            'fileName' => $fileName,
+                            'status' => 'processing',
+                            'timestamp' => $pendingJob->created_at
+                        ];
+                    }
+                }
+            }
+        }
+        
+        \Illuminate\Support\Facades\Log::info('Returning statuses:', $statuses);
+        return response()->json($statuses);
+    }
+
+    /**
+     * Get information about available files for RAG.
+     */
+    public function getRagInfo()
+    {
+        $totalChunks = \Illuminate\Support\Facades\DB::table('rag_chunks')->count();
+        $files = \Illuminate\Support\Facades\DB::table('rag_chunks')
+            ->select('source')
+            ->distinct()
+            ->pluck('source')
+            ->toArray();
+            
+        return response()->json([
+            'total_chunks' => $totalChunks,
+            'available_files' => $files,
+            'rag_enabled' => $totalChunks > 0
+        ]);
+    }
+
+    /**
+     * Show the file gallery page.
+     */
+    public function fileGallery()
+    {
+        $files = \Illuminate\Support\Facades\DB::table('rag_chunks')
+            ->select('source', \Illuminate\Support\Facades\DB::raw('COUNT(*) as chunk_count'))
+            ->groupBy('source')
+            ->orderBy('source')
+            ->get();
+
+        $totalChunks = \Illuminate\Support\Facades\DB::table('rag_chunks')->count();
+        
+        return view('file-gallery', compact('files', 'totalChunks'));
+    }
+
+    /**
+     * Get detailed information about a specific file's chunks.
+     */
+    public function getFileChunks(Request $request)
+    {
+        $fileName = $request->input('file');
+        
+        $chunks = \Illuminate\Support\Facades\DB::table('rag_chunks')
+            ->where('source', $fileName)
+            ->select('id', 'chunk', 'created_at')
+            ->orderBy('id')
+            ->get();
+            
+        return response()->json([
+            'file' => $fileName,
+            'chunks' => $chunks,
+            'total_chunks' => $chunks->count()
+        ]);
+    }
+
+    /**
+     * Debug endpoint to test RAG search functionality.
+     */
+    public function debugRagSearch(Request $request)
+    {
+        $query = $request->input('query', '');
+        
+        if (empty($query)) {
+            return response()->json(['error' => 'Query parameter is required'], 400);
+        }
+        
+        try {
+            $relevantContent = $this->searchRelevantFileContent($query);
+            $fileContext = $this->buildFileContext($relevantContent);
+            
+            return response()->json([
+                'query' => $query,
+                'relevant_chunks' => $relevantContent,
+                'file_context' => $fileContext,
+                'context_length' => strlen($fileContext),
+                'chunks_found' => count($relevantContent)
+            ]);
+            
+        } catch (\Exception $e) {
+            return response()->json([
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ], 500);
+        }
     }
 
     /**
@@ -316,61 +463,71 @@ EOT;
     }
 
     /**
-     * Parse uploaded file and return extracted text content.
+     * Search for relevant content from uploaded files using vector similarity.
      */
-    private function parseUploadedFile($file): string
+    private function searchRelevantFileContent(string $userMessage): array
     {
-        $ext = strtolower($file->getClientOriginalExtension());
-        $content = '';
-        if (in_array($ext, ['txt', 'csv', 'rtf', 'odt'])) {
-            $content = file_get_contents($file->getRealPath());
-        } elseif ($ext === 'pdf') {
-            try {
-                $parser = new \Smalot\PdfParser\Parser();
-                $pdf = $parser->parseFile($file->getRealPath());
-                $content = $pdf->getText();
-            } catch (\Exception $e) {
-                $content = '[PDF parsing failed: ' . $e->getMessage() . ']';
+        try {
+            // First check if there are any processed files available
+            $totalChunks = \Illuminate\Support\Facades\DB::table('rag_chunks')->count();
+            if ($totalChunks === 0) {
+                \Illuminate\Support\Facades\Log::info('No processed files available for RAG search');
+                return [];
             }
-        } elseif (in_array($ext, ['doc', 'docx'])) {
-            try {
-                $phpWord = \PhpOffice\PhpWord\IOFactory::load($file->getRealPath());
-                $text = '';
-                foreach ($phpWord->getSections() as $section) {
-                    $elements = $section->getElements();
-                    foreach ($elements as $element) {
-                        if ($element instanceof \PhpOffice\PhpWord\Element\Text) {
-                            $text .= $element->getText() . "\n";
-                        } elseif ($element instanceof \PhpOffice\PhpWord\Element\TextRun) {
-                            foreach ($element->getElements() as $subElement) {
-                                if ($subElement instanceof \PhpOffice\PhpWord\Element\Text) {
-                                    $text .= $subElement->getText();
-                                }
-                            }
-                            $text .= "\n";
-                        }
-                    }
-                }
-                $content = $text;
-            } catch (\Exception $e) {
-                $content = '[DOC/DOCX parsing failed: ' . $e->getMessage() . ']';
+            
+            $embeddingService = new \App\Services\EmbeddingService();
+            $vectorSearch = new \App\Services\VectorSearchService();
+            
+            // Generate embedding for user message
+            $queryEmbedding = $embeddingService->getEmbedding($userMessage);
+            
+            if (!$queryEmbedding) {
+                \Illuminate\Support\Facades\Log::warning('Failed to generate embedding for user message');
+                return [];
             }
-        } elseif (in_array($ext, ['xlsx', 'xls'])) {
-            try {
-                $spreadsheet = \PhpOffice\PhpSpreadsheet\IOFactory::load($file->getRealPath());
-                $sheet = $spreadsheet->getActiveSheet();
-                $rows = $sheet->toArray();
-                $lines = array();
-                foreach ($rows as $row) {
-                    $lines[] = implode("\t", $row);
-                }
-                $content = implode("\n", $lines);
-            } catch (\Exception $e) {
-                $content = '[Excel parsing failed: ' . $e->getMessage() . ']';
+            
+            // Search for similar chunks
+            $similarChunks = $vectorSearch->searchSimilar($queryEmbedding, 5); // Get top 5 most relevant chunks
+            
+            // Filter out low similarity results (threshold of 0.3)
+            $relevantChunks = array_filter($similarChunks, function($chunk) {
+                return $chunk['similarity'] > 0.3;
+            });
+            
+            \Illuminate\Support\Facades\Log::info('RAG Search - Query: "' . $userMessage . '", Found: ' . count($relevantChunks) . ' relevant chunks out of ' . $totalChunks . ' total chunks');
+            
+            if (!empty($relevantChunks)) {
+                $fileNames = array_unique(array_column($relevantChunks, 'source'));
+                \Illuminate\Support\Facades\Log::info('Relevant files: ' . implode(', ', $fileNames));
             }
-        } else {
-            $content = '[Unsupported file type]';
+            
+            return $relevantChunks;
+            
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('Error searching for relevant content: ' . $e->getMessage());
+            return [];
         }
-        return $content;
+    }
+
+    /**
+     * Build context from relevant file chunks for the LLM prompt.
+     */
+    private function buildFileContext(array $relevantChunks): string
+    {
+        if (empty($relevantChunks)) {
+            return '';
+        }
+        
+        $context = "IMPORTANT: The following information comes from files uploaded by the user. Use this information as your primary source when answering questions:\n\n";
+        
+        foreach ($relevantChunks as $index => $chunk) {
+            $fileName = $chunk['source'] ?? 'Unknown file';
+            $context .= "--- Content from file: {$fileName} (relevance: " . round($chunk['similarity'], 3) . ") ---\n";
+            $context .= $chunk['chunk'] . "\n\n";
+        }
+        
+        $context .= "CRITICAL INSTRUCTION: When answering questions, ALWAYS prioritize and use the information above from the user's uploaded files as your primary source. Only fall back to your general knowledge about DEPDev if the question is completely unrelated to the uploaded content. Always cite which file the information comes from when possible.\n\n";
+        
+        return $context;
     }
 }

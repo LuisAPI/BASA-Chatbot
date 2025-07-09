@@ -32,6 +32,7 @@ class VectorSearchService
             $sim = $this->cosineSimilarity($queryEmbedding, $embedding);
             $results[] = [
                 'chunk' => $row->chunk,
+                'source' => $row->source,
                 'similarity' => $sim,
             ];
         }
