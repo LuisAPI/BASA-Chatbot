@@ -15,6 +15,11 @@
                 <i class="bi bi-robot text-white me-2"></i>Chatbot
             </a>
         </li>
+        <li class="nav-item">
+            <a class="nav-link d-flex align-items-center" href="/chatbot/files">
+                <i class="bi bi-folder2-open text-white me-2"></i>File Gallery
+            </a>
+        </li>
         <!-- Add more links as needed -->
     </ul>
 </aside>

@@ -127,7 +127,17 @@ async function sendMessage(msg) {
     chatLog.removeChild(chatLog.lastChild);
     if (resp && resp.ok) {
         const data = await resp.json();
-        addMessage(data.reply, 'bot');
+        let message = data.reply;
+        
+        // Add RAG information if used
+        if (data.rag_used) {
+            message += '\n\n[Response based on ' + data.rag_chunks_found + ' chunks from: ' + data.rag_files.join(', ') + ']';
+            console.log('RAG used:', data);
+        } else {
+            console.log('RAG not used - no relevant content found');
+        }
+        
+        addMessage(message, 'bot');
     } else {
         addMessage('Error: Could not get response.', 'bot', true, () => {
             sendMessage(msg);

@@ -32,7 +32,7 @@ class ProcessFileForRAG implements ShouldQueue
         try {
             $ext = strtolower(pathinfo($this->fileName, PATHINFO_EXTENSION));
             $content = '';
-            $fullPath = storage_path('app/' . $this->filePath);
+            $fullPath = storage_path('app/private/' . $this->filePath);
             if (in_array($ext, ['txt', 'csv', 'rtf', 'odt'])) {
                 $content = file_get_contents($fullPath);
             } elseif ($ext === 'pdf') {

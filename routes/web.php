@@ -28,6 +28,13 @@ Route::post('/chatbot/processing-status', [App\Http\Controllers\ChatbotControlle
 // Endpoint for getting RAG information
 Route::get('/chatbot/rag-info', [App\Http\Controllers\ChatbotController::class, 'getRagInfo']);
 
+// File gallery routes
+Route::get('/chatbot/files', [App\Http\Controllers\ChatbotController::class, 'fileGallery']);
+Route::post('/chatbot/file-chunks', [App\Http\Controllers\ChatbotController::class, 'getFileChunks']);
+
+// Debug RAG search
+Route::post('/chatbot/debug-rag', [App\Http\Controllers\ChatbotController::class, 'debugRagSearch']);
+
 Route::get('/test-broadcast', function () {
     event(new FileProcessed('test.txt'));
     return 'Sent';

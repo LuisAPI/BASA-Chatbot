@@ -55,7 +55,13 @@ class ChatbotController extends Controller
         $relevantContent = $this->searchRelevantFileContent($userMessage);
         
         $botReply = $this->sendToLLM($userMessage, null, $relevantContent);
-        return response()->json(['reply' => $botReply]);
+        
+        return response()->json([
+            'reply' => $botReply,
+            'rag_used' => !empty($relevantContent),
+            'rag_chunks_found' => count($relevantContent),
+            'rag_files' => !empty($relevantContent) ? array_unique(array_column($relevantContent, 'source')) : []
+        ]);
     }
 
     public function upload(Request $request)
@@ -326,6 +332,73 @@ EOT;
             'available_files' => $files,
             'rag_enabled' => $totalChunks > 0
         ]);
+    }
+
+    /**
+     * Show the file gallery page.
+     */
+    public function fileGallery()
+    {
+        $files = \Illuminate\Support\Facades\DB::table('rag_chunks')
+            ->select('source', \Illuminate\Support\Facades\DB::raw('COUNT(*) as chunk_count'))
+            ->groupBy('source')
+            ->orderBy('source')
+            ->get();
+
+        $totalChunks = \Illuminate\Support\Facades\DB::table('rag_chunks')->count();
+        
+        return view('file-gallery', compact('files', 'totalChunks'));
+    }
+
+    /**
+     * Get detailed information about a specific file's chunks.
+     */
+    public function getFileChunks(Request $request)
+    {
+        $fileName = $request->input('file');
+        
+        $chunks = \Illuminate\Support\Facades\DB::table('rag_chunks')
+            ->where('source', $fileName)
+            ->select('id', 'chunk', 'created_at')
+            ->orderBy('id')
+            ->get();
+            
+        return response()->json([
+            'file' => $fileName,
+            'chunks' => $chunks,
+            'total_chunks' => $chunks->count()
+        ]);
+    }
+
+    /**
+     * Debug endpoint to test RAG search functionality.
+     */
+    public function debugRagSearch(Request $request)
+    {
+        $query = $request->input('query', '');
+        
+        if (empty($query)) {
+            return response()->json(['error' => 'Query parameter is required'], 400);
+        }
+        
+        try {
+            $relevantContent = $this->searchRelevantFileContent($query);
+            $fileContext = $this->buildFileContext($relevantContent);
+            
+            return response()->json([
+                'query' => $query,
+                'relevant_chunks' => $relevantContent,
+                'file_context' => $fileContext,
+                'context_length' => strlen($fileContext),
+                'chunks_found' => count($relevantContent)
+            ]);
+            
+        } catch (\Exception $e) {
+            return response()->json([
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ], 500);
+        }
     }
 
     /**
