@@ -8,6 +8,7 @@ use App\Services\VectorSearchService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use App\Jobs\ProcessFileForRAG;
 
 class ChatbotController extends Controller
 {
@@ -56,53 +57,19 @@ class ChatbotController extends Controller
 
     public function upload(Request $request)
     {
+        Log::info('TEST LOG: upload() called');
         if (!$request->hasFile('file')) {
             return response()->json(['reply' => 'No file uploaded.'], 400);
         }
         $file = $request->file('file');
-        $content = $this->parseUploadedFile($file);
-        $userMessage = $request->input('message', '');
-        // --- RAG logic ---
-        $chunker = new Chunker();
-        $embedder = new EmbeddingService();
-        $vectorSearch = new VectorSearchService();
-        $chunks = $chunker->chunkText($content);
-        $source = $file->getClientOriginalName();
-        $topChunks = [];
-        // Store chunks and embeddings
-        foreach ($chunks as $chunk) {
-            $embedding = $embedder->getEmbedding($chunk);
-            if ($embedding) {
-                $vectorSearch->storeChunk($source, $chunk, $embedding);
-            }
+        $fileName = $file->getClientOriginalName();
+        $storagePath = $file->storeAs('uploads', uniqid() . '_' . $fileName, 'local');
+        if (!$storagePath) {
+            return response()->json(['reply' => 'Failed to save uploaded file.'], 500);
         }
-        // Embed the user query
-        $queryEmbedding = $embedder->getEmbedding($userMessage);
-        if ($queryEmbedding) {
-            $topChunks = $vectorSearch->searchSimilar($queryEmbedding, 3);
-        }
-        $context = '';
-        foreach ($topChunks as $c) {
-            $context .= $c['chunk'] . "\n---\n";
-        }
-        $prompt = <<<EOT
-You are given relevant excerpts from a file. Use these to answer the user's query as best as possible.
-
-User's query:
-{$userMessage}
-
-Relevant file excerpts:
-{$context}
-EOT;
-        if (strlen($prompt) > 4000) {
-            $prompt = substr($prompt, 0, 4000) . '... [truncated]';
-        }
-        Log::info('LLM Prompt (file upload, RAG):', ['prompt' => $prompt]);
-        if (filter_var(env('APP_DEBUG', false), FILTER_VALIDATE_BOOLEAN)) {
-            return response()->json(['reply' => "[DEBUG PROMPT OUTPUT]\n" . $prompt]);
-        }
-        $botReply = $this->sendToLLM($prompt);
-        return response()->json(['reply' => $botReply]);
+        // Dispatch background job for parsing, chunking, embedding
+        ProcessFileForRAG::dispatch($storagePath, $fileName);
+        return response()->json(['reply' => 'File is being processed. You will be notified when it is ready.', 'file' => $fileName]);
     }
 
     /**
@@ -214,39 +181,47 @@ EOT;
         $prompt = $request->input('message');
         $systemPrompt = $this->getSystemPrompt();
         $model = env('LLM_MODEL', 'tinyllama');
-        return response()->stream(function () use ($prompt, $systemPrompt, $model) {
-            $client = new \GuzzleHttp\Client(['timeout' => 65]);
-            $res = $client->post('http://127.0.0.1:11434/api/generate', [
-                'json' => [
-                    'model' => $model,
-                    'system' => $systemPrompt,
-                    'prompt' => $prompt,
+        
+        try {
+            return response()->stream(function () use ($prompt, $systemPrompt, $model) {
+                $client = new \GuzzleHttp\Client(['timeout' => 65]);
+                $res = $client->post('http://127.0.0.1:11434/api/generate', [
+                    'json' => [
+                        'model' => $model,
+                        'system' => $systemPrompt,
+                        'prompt' => $prompt,
+                        'stream' => true
+                    ],
                     'stream' => true
-                ],
-                'stream' => true
-            ]);
-            $body = $res->getBody();
-            $buffer = '';
-            while (!$body->eof()) {
-                $buffer .= $body->read(4096);
-                while (($pos = strpos($buffer, "\n")) !== false) {
-                    $line = trim(substr($buffer, 0, $pos));
-                    $buffer = substr($buffer, $pos + 1);
-                    if ($line) {
-                        $json = json_decode($line, true);
-                        if (isset($json['response'])) {
-                            echo $json['response'];
-                            ob_flush();
-                            flush();
+                ]);
+                $body = $res->getBody();
+                $buffer = '';
+                while (!$body->eof()) {
+                    $buffer .= $body->read(4096);
+                    while (($pos = strpos($buffer, "\n")) !== false) {
+                        $line = trim(substr($buffer, 0, $pos));
+                        $buffer = substr($buffer, $pos + 1);
+                        if ($line) {
+                            $json = json_decode($line, true);
+                            if (isset($json['response'])) {
+                                echo $json['response'];
+                                ob_flush();
+                                flush();
+                            }
                         }
                     }
                 }
-            }
-        }, 200, [
-            'Content-Type' => 'text/event-stream',
-            'Cache-Control' => 'no-cache',
-            'X-Accel-Buffering' => 'no'
-        ]);
+            }, 200, [
+                'Content-Type' => 'text/event-stream',
+                'Cache-Control' => 'no-cache',
+                'X-Accel-Buffering' => 'no'
+            ]);
+        } catch (\Exception $e) {
+            // If streaming fails, fall back to non-streaming mode
+            \Illuminate\Support\Facades\Log::error('Streaming failed, falling back to non-streaming: ' . $e->getMessage());
+            $response = $this->sendToLLM($prompt, $systemPrompt);
+            return response()->json(['reply' => $response]);
+        }
     }
 
     /**
@@ -254,8 +229,65 @@ EOT;
      */
     public function streamingEnabled()
     {
-        $stream = filter_var(env('LLM_STREAM', false), FILTER_VALIDATE_BOOLEAN);
-        return response()->json(['streaming' => $stream]);
+        return response()->json(['streaming' => filter_var(env('LLM_STREAM', false), FILTER_VALIDATE_BOOLEAN)]);
+    }
+
+    public function processingStatus(Request $request)
+    {
+        $files = $request->input('files', []);
+        $statuses = [];
+        
+        \Illuminate\Support\Facades\Log::info('Processing status check for files:', $files);
+        
+        foreach ($files as $fileName) {
+            // Check if the file has been processed by looking at the rag_chunks table
+            $chunkCount = \Illuminate\Support\Facades\DB::table('rag_chunks')
+                ->where('source', $fileName)
+                ->count();
+                
+            \Illuminate\Support\Facades\Log::info("File {$fileName}: {$chunkCount} chunks found");
+                
+            if ($chunkCount > 0) {
+                // File has been processed successfully
+                $statuses[] = [
+                    'fileName' => $fileName,
+                    'status' => 'completed',
+                    'timestamp' => now()
+                ];
+            } else {
+                // Check if there's a failed job for this file
+                $failedJob = \Illuminate\Support\Facades\DB::table('jobs')
+                    ->where('payload', 'like', '%"' . $fileName . '"%')
+                    ->where('failed_at', 'is not', null)
+                    ->first();
+                    
+                if ($failedJob) {
+                    $statuses[] = [
+                        'fileName' => $fileName,
+                        'status' => 'failed',
+                        'error' => 'Job processing failed',
+                        'timestamp' => $failedJob->failed_at
+                    ];
+                } else {
+                    // Check if there's a pending job for this file
+                    $pendingJob = \Illuminate\Support\Facades\DB::table('jobs')
+                        ->where('payload', 'like', '%"' . $fileName . '"%')
+                        ->where('failed_at', null)
+                        ->first();
+                        
+                    if ($pendingJob) {
+                        $statuses[] = [
+                            'fileName' => $fileName,
+                            'status' => 'processing',
+                            'timestamp' => $pendingJob->created_at
+                        ];
+                    }
+                }
+            }
+        }
+        
+        \Illuminate\Support\Facades\Log::info('Returning statuses:', $statuses);
+        return response()->json($statuses);
     }
 
     /**
@@ -313,64 +345,5 @@ EOT;
         } catch (\Exception $e) {
             return ['error' => 'Sorry, I could not fetch or process the webpage.'];
         }
-    }
-
-    /**
-     * Parse uploaded file and return extracted text content.
-     */
-    private function parseUploadedFile($file): string
-    {
-        $ext = strtolower($file->getClientOriginalExtension());
-        $content = '';
-        if (in_array($ext, ['txt', 'csv', 'rtf', 'odt'])) {
-            $content = file_get_contents($file->getRealPath());
-        } elseif ($ext === 'pdf') {
-            try {
-                $parser = new \Smalot\PdfParser\Parser();
-                $pdf = $parser->parseFile($file->getRealPath());
-                $content = $pdf->getText();
-            } catch (\Exception $e) {
-                $content = '[PDF parsing failed: ' . $e->getMessage() . ']';
-            }
-        } elseif (in_array($ext, ['doc', 'docx'])) {
-            try {
-                $phpWord = \PhpOffice\PhpWord\IOFactory::load($file->getRealPath());
-                $text = '';
-                foreach ($phpWord->getSections() as $section) {
-                    $elements = $section->getElements();
-                    foreach ($elements as $element) {
-                        if ($element instanceof \PhpOffice\PhpWord\Element\Text) {
-                            $text .= $element->getText() . "\n";
-                        } elseif ($element instanceof \PhpOffice\PhpWord\Element\TextRun) {
-                            foreach ($element->getElements() as $subElement) {
-                                if ($subElement instanceof \PhpOffice\PhpWord\Element\Text) {
-                                    $text .= $subElement->getText();
-                                }
-                            }
-                            $text .= "\n";
-                        }
-                    }
-                }
-                $content = $text;
-            } catch (\Exception $e) {
-                $content = '[DOC/DOCX parsing failed: ' . $e->getMessage() . ']';
-            }
-        } elseif (in_array($ext, ['xlsx', 'xls'])) {
-            try {
-                $spreadsheet = \PhpOffice\PhpSpreadsheet\IOFactory::load($file->getRealPath());
-                $sheet = $spreadsheet->getActiveSheet();
-                $rows = $sheet->toArray();
-                $lines = array();
-                foreach ($rows as $row) {
-                    $lines[] = implode("\t", $row);
-                }
-                $content = implode("\n", $lines);
-            } catch (\Exception $e) {
-                $content = '[Excel parsing failed: ' . $e->getMessage() . ']';
-            }
-        } else {
-            $content = '[Unsupported file type]';
-        }
-        return $content;
     }
 }
