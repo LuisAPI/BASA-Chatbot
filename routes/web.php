@@ -25,6 +25,9 @@ Route::get('/chatbot/streaming-enabled', [App\Http\Controllers\ChatbotController
 // Endpoint for checking file processing status (polling)
 Route::post('/chatbot/processing-status', [App\Http\Controllers\ChatbotController::class, 'processingStatus']);
 
+// Endpoint for getting RAG information
+Route::get('/chatbot/rag-info', [App\Http\Controllers\ChatbotController::class, 'getRagInfo']);
+
 Route::get('/test-broadcast', function () {
     event(new FileProcessed('test.txt'));
     return 'Sent';

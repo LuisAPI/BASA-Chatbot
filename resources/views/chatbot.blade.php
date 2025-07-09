@@ -418,6 +418,8 @@ function startFileProcessingPolling() {
                     console.log('File completed:', file.fileName);
                     showFileProcessed(file.fileName);
                     processingFiles.delete(file.fileName);
+                    // Check RAG status after file completion
+                    checkRagStatus();
                 } else if (file.status === 'failed') {
                     console.log('File failed:', file.fileName, file.error);
                     showFileFailed(file.fileName, file.error || 'Processing failed');
@@ -442,7 +444,48 @@ function stopFileProcessingPolling() {
     }
 }
 
+// Check RAG status and show indicator
+function checkRagStatus() {
+    fetch('/chatbot/rag-info')
+        .then(response => response.json())
+        .then(data => {
+            console.log('RAG Status:', data);
+            if (data.rag_enabled) {
+                showRagIndicator(data.available_files.length);
+            } else {
+                hideRagIndicator();
+            }
+        })
+        .catch(error => {
+            console.log('Error checking RAG status:', error);
+        });
+}
+
+function showRagIndicator(fileCount) {
+    let indicator = document.getElementById('rag-indicator');
+    if (!indicator) {
+        indicator = document.createElement('div');
+        indicator.id = 'rag-indicator';
+        indicator.className = 'alert alert-success d-flex align-items-center mb-2';
+        indicator.innerHTML = `<span class="bi bi-file-earmark-text me-2"></span>RAG Enabled: ${fileCount} file(s) available for enhanced responses`;
+        document.querySelector('.chat-container').insertBefore(indicator, document.querySelector('.chat-log'));
+    } else {
+        indicator.innerHTML = `<span class="bi bi-file-earmark-text me-2"></span>RAG Enabled: ${fileCount} file(s) available for enhanced responses`;
+        indicator.style.display = 'block';
+    }
+}
+
+function hideRagIndicator() {
+    let indicator = document.getElementById('rag-indicator');
+    if (indicator) {
+        indicator.style.display = 'none';
+    }
+}
+
 // Start polling when page loads
-document.addEventListener('DOMContentLoaded', startFileProcessingPolling);
+document.addEventListener('DOMContentLoaded', function() {
+    startFileProcessingPolling();
+    checkRagStatus(); // Check RAG status on page load
+});
 </script>
 @endsection

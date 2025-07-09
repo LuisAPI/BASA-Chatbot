@@ -51,7 +51,10 @@ class ChatbotController extends Controller
             $userMessage = $question . " Title: {$webResult['title']}. Content: {$webResult['content']}";
         }
 
-        $botReply = $this->sendToLLM($userMessage);
+        // Implement RAG: Search for relevant file content
+        $relevantContent = $this->searchRelevantFileContent($userMessage);
+        
+        $botReply = $this->sendToLLM($userMessage, null, $relevantContent);
         return response()->json(['reply' => $botReply]);
     }
 
@@ -126,9 +129,16 @@ EOT;
      * Send a prompt to the LLM and return the response.
      * If streaming is enabled, handle streamed responses.
      */
-    private function sendToLLM(string $prompt, ?string $systemPrompt = null): string
+    private function sendToLLM(string $prompt, ?string $systemPrompt = null, ?array $relevantContent = null): string
     {
         $systemPrompt = $systemPrompt ?? $this->getSystemPrompt();
+        
+        // If we have relevant content from uploaded files, prioritize it
+        if ($relevantContent && !empty($relevantContent)) {
+            $fileContext = $this->buildFileContext($relevantContent);
+            $systemPrompt = $fileContext . "\n\n" . $systemPrompt;
+        }
+        
         $model = env('LLM_MODEL', 'tinyllama');
         $stream = filter_var(env('LLM_STREAM', false), FILTER_VALIDATE_BOOLEAN);
         if (!$stream) {
@@ -181,6 +191,15 @@ EOT;
         $prompt = $request->input('message');
         $systemPrompt = $this->getSystemPrompt();
         $model = env('LLM_MODEL', 'tinyllama');
+        
+        // Implement RAG: Search for relevant file content
+        $relevantContent = $this->searchRelevantFileContent($prompt);
+        
+        // If we have relevant content from uploaded files, prioritize it
+        if ($relevantContent && !empty($relevantContent)) {
+            $fileContext = $this->buildFileContext($relevantContent);
+            $systemPrompt = $fileContext . "\n\n" . $systemPrompt;
+        }
         
         try {
             return response()->stream(function () use ($prompt, $systemPrompt, $model) {
@@ -291,6 +310,25 @@ EOT;
     }
 
     /**
+     * Get information about available files for RAG.
+     */
+    public function getRagInfo()
+    {
+        $totalChunks = \Illuminate\Support\Facades\DB::table('rag_chunks')->count();
+        $files = \Illuminate\Support\Facades\DB::table('rag_chunks')
+            ->select('source')
+            ->distinct()
+            ->pluck('source')
+            ->toArray();
+            
+        return response()->json([
+            'total_chunks' => $totalChunks,
+            'available_files' => $files,
+            'rag_enabled' => $totalChunks > 0
+        ]);
+    }
+
+    /**
      * Fetch and parse a webpage, respecting robots.txt and returning extracted content.
      */
     private function fetchAndParseWebpage(string $url): ?array
@@ -345,5 +383,74 @@ EOT;
         } catch (\Exception $e) {
             return ['error' => 'Sorry, I could not fetch or process the webpage.'];
         }
+    }
+
+    /**
+     * Search for relevant content from uploaded files using vector similarity.
+     */
+    private function searchRelevantFileContent(string $userMessage): array
+    {
+        try {
+            // First check if there are any processed files available
+            $totalChunks = \Illuminate\Support\Facades\DB::table('rag_chunks')->count();
+            if ($totalChunks === 0) {
+                \Illuminate\Support\Facades\Log::info('No processed files available for RAG search');
+                return [];
+            }
+            
+            $embeddingService = new \App\Services\EmbeddingService();
+            $vectorSearch = new \App\Services\VectorSearchService();
+            
+            // Generate embedding for user message
+            $queryEmbedding = $embeddingService->getEmbedding($userMessage);
+            
+            if (!$queryEmbedding) {
+                \Illuminate\Support\Facades\Log::warning('Failed to generate embedding for user message');
+                return [];
+            }
+            
+            // Search for similar chunks
+            $similarChunks = $vectorSearch->searchSimilar($queryEmbedding, 5); // Get top 5 most relevant chunks
+            
+            // Filter out low similarity results (threshold of 0.3)
+            $relevantChunks = array_filter($similarChunks, function($chunk) {
+                return $chunk['similarity'] > 0.3;
+            });
+            
+            \Illuminate\Support\Facades\Log::info('RAG Search - Query: "' . $userMessage . '", Found: ' . count($relevantChunks) . ' relevant chunks out of ' . $totalChunks . ' total chunks');
+            
+            if (!empty($relevantChunks)) {
+                $fileNames = array_unique(array_column($relevantChunks, 'source'));
+                \Illuminate\Support\Facades\Log::info('Relevant files: ' . implode(', ', $fileNames));
+            }
+            
+            return $relevantChunks;
+            
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('Error searching for relevant content: ' . $e->getMessage());
+            return [];
+        }
+    }
+
+    /**
+     * Build context from relevant file chunks for the LLM prompt.
+     */
+    private function buildFileContext(array $relevantChunks): string
+    {
+        if (empty($relevantChunks)) {
+            return '';
+        }
+        
+        $context = "IMPORTANT: The following information comes from files uploaded by the user. Use this information as your primary source when answering questions:\n\n";
+        
+        foreach ($relevantChunks as $index => $chunk) {
+            $fileName = $chunk['source'] ?? 'Unknown file';
+            $context .= "--- Content from file: {$fileName} (relevance: " . round($chunk['similarity'], 3) . ") ---\n";
+            $context .= $chunk['chunk'] . "\n\n";
+        }
+        
+        $context .= "CRITICAL INSTRUCTION: When answering questions, ALWAYS prioritize and use the information above from the user's uploaded files as your primary source. Only fall back to your general knowledge about DEPDev if the question is completely unrelated to the uploaded content. Always cite which file the information comes from when possible.\n\n";
+        
+        return $context;
     }
 }
