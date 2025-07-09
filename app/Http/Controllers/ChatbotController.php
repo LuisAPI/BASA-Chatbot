@@ -2,8 +2,12 @@
 
 namespace App\Http\Controllers;
 
+use App\Services\Chunker;
+use App\Services\EmbeddingService;
+use App\Services\VectorSearchService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 
 class ChatbotController extends Controller
 {
@@ -58,7 +62,45 @@ class ChatbotController extends Controller
         $file = $request->file('file');
         $content = $this->parseUploadedFile($file);
         $userMessage = $request->input('message', '');
-        $prompt = ($userMessage ? $userMessage . "\n" : '') . "File content: " . mb_substr($content, 0, 4000);
+        // --- RAG logic ---
+        $chunker = new Chunker();
+        $embedder = new EmbeddingService();
+        $vectorSearch = new VectorSearchService();
+        $chunks = $chunker->chunkText($content);
+        $source = $file->getClientOriginalName();
+        $topChunks = [];
+        // Store chunks and embeddings
+        foreach ($chunks as $chunk) {
+            $embedding = $embedder->getEmbedding($chunk);
+            if ($embedding) {
+                $vectorSearch->storeChunk($source, $chunk, $embedding);
+            }
+        }
+        // Embed the user query
+        $queryEmbedding = $embedder->getEmbedding($userMessage);
+        if ($queryEmbedding) {
+            $topChunks = $vectorSearch->searchSimilar($queryEmbedding, 3);
+        }
+        $context = '';
+        foreach ($topChunks as $c) {
+            $context .= $c['chunk'] . "\n---\n";
+        }
+        $prompt = <<<EOT
+You are given relevant excerpts from a file. Use these to answer the user's query as best as possible.
+
+User's query:
+{$userMessage}
+
+Relevant file excerpts:
+{$context}
+EOT;
+        if (strlen($prompt) > 4000) {
+            $prompt = substr($prompt, 0, 4000) . '... [truncated]';
+        }
+        Log::info('LLM Prompt (file upload, RAG):', ['prompt' => $prompt]);
+        if (filter_var(env('APP_DEBUG', false), FILTER_VALIDATE_BOOLEAN)) {
+            return response()->json(['reply' => "[DEBUG PROMPT OUTPUT]\n" . $prompt]);
+        }
         $botReply = $this->sendToLLM($prompt);
         return response()->json(['reply' => $botReply]);
     }
