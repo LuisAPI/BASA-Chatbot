@@ -97,8 +97,10 @@ class ProcessFileForRAG implements ShouldQueue
             // Log::info('📦 Dispatching FileProcessed event for: ' . $this->fileName);
 
             // Dispatch the event after processing
-            event(new FileProcessed($this->fileName));
+            event(new FileProcessed($this->fileName, 'completed'));
         } catch (\Exception $e) {
+            // Dispatch failed event
+            event(new FileProcessed($this->fileName, 'failed'));
             event(new \App\Events\FileFailed($this->fileName, $e->getMessage()));
         }
     }

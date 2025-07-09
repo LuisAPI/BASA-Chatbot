@@ -22,6 +22,9 @@ Route::post('/chatbot/stream', [App\Http\Controllers\ChatbotController::class, '
 // Endpoint for frontend to check if streaming is enabled
 Route::get('/chatbot/streaming-enabled', [App\Http\Controllers\ChatbotController::class, 'streamingEnabled']);
 
+// Endpoint for checking file processing status (polling)
+Route::post('/chatbot/processing-status', [App\Http\Controllers\ChatbotController::class, 'processingStatus']);
+
 Route::get('/test-broadcast', function () {
     event(new FileProcessed('test.txt'));
     return 'Sent';

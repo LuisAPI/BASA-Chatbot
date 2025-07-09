@@ -48,26 +48,6 @@
         window.addEventListener('resize', setSidebarState);
     });
     </script>
-    <script src="https://cdn.jsdelivr.net/npm/pusher-js@7.2/dist/web/pusher.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/laravel-echo/dist/echo.iife.js"></script>
-    <script>
-        const Echo = window.Echo.default;
 
-        window.Pusher = Pusher;
-
-        window.Echo = new Echo({
-            broadcaster: 'pusher',
-            key: 'local',
-            wsHost: window.location.hostname,
-            wsPort: 6001,
-            forceTLS: false,
-            disableStats: true,
-            enabledTransports: ['ws'],
-        });
-
-        Echo.connector.ws.onopen = () => {
-            console.log('✔️ Echo connected to Reverb WebSocket server');
-        };
-    </script>
 </body>
 </html>

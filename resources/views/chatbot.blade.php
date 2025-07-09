@@ -150,7 +150,22 @@ async function streamMessage(msg) {
         body: JSON.stringify({ message: msg })
     });
     chatLog.removeChild(chatLog.lastChild);
-    if (!response.ok || !response.body) {
+    if (!response.ok) {
+        // Check if it's a JSON response (fallback from streaming)
+        const contentType = response.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+            return response.json().then(data => {
+                addMessage(data.reply, 'bot');
+            });
+        }
+        addMessage('Error: Could not get response.', 'bot', true, retryCallback);
+        if (autoRetry.checked) {
+            setTimeout(() => streamMessage(msg), 1000);
+        }
+        return;
+    }
+    
+    if (!response.body) {
         addMessage('Error: Could not get response.', 'bot', true, retryCallback);
         if (autoRetry.checked) {
             setTimeout(() => streamMessage(msg), 1000);
@@ -263,6 +278,8 @@ attachFileBtn && attachFileBtn.addEventListener('click', function() {
         const file = fileAttachInput.files[0];
         showFileProcessing(file.name);
         showFilePill(file);
+        processingFiles.add(file.name); // Track this file for polling
+        
         const formData = new FormData();
         formData.append('file', file);
         const msg = messageInput.value.trim();
@@ -274,6 +291,7 @@ attachFileBtn && attachFileBtn.addEventListener('click', function() {
             uploadTimedOut = true;
             clearFilePill();
             removeFileProcessing(file.name);
+            processingFiles.delete(file.name);
             addMessage('Error: File upload timed out. Please try again.', 'bot', true);
         }, 60000); // 60s timeout
         fetch('/chatbot/upload', {
@@ -293,6 +311,7 @@ attachFileBtn && attachFileBtn.addEventListener('click', function() {
             if (uploadTimedOut) return;
             addMessage(data.reply, 'bot');
             clearFilePill();
+            // Don't remove from processingFiles - let polling handle the status
         })
         .catch(() => {
             clearTimeout(uploadTimeout);
@@ -300,6 +319,7 @@ attachFileBtn && attachFileBtn.addEventListener('click', function() {
             addMessage('Error: Could not upload or process the file.', 'bot', true);
             clearFilePill();
             removeFileProcessing(file.name);
+            processingFiles.delete(file.name);
         });
         fileAttachInput.value = '';
         document.body.click();
@@ -332,16 +352,7 @@ function clearFilePill() {
     filePillContainer.style.display = 'none';
 }
 
-// Listen for file processing events (using Laravel Echo)
-if (window.Echo) {
-    Echo.channel('files')
-        .listen('.FileProcessed', (e) => {
-            showFileProcessed(e.fileName);
-        })
-        .listen('.FileFailed', (e) => {
-            showFileFailed(e.fileName, e.error);
-        });
-}
+// Polling-based file processing status (no WebSocket required)
 
 function showFileProcessing(fileName) {
     let div = document.createElement('div');
@@ -374,5 +385,64 @@ function removeFileProcessing(fileName) {
     let div = document.getElementById('processing-' + fileName);
     if (div) div.remove();
 }
+
+// Simple polling for file processing status (no WebSocket required)
+let processingFiles = new Set();
+let pollingInterval;
+
+function startFileProcessingPolling() {
+    if (pollingInterval) return;
+    
+    pollingInterval = setInterval(() => {
+        if (processingFiles.size === 0) return;
+        
+        console.log('Polling for files:', Array.from(processingFiles));
+        
+        // Check processing status via AJAX
+        fetch('/chatbot/processing-status', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+            },
+            body: JSON.stringify({
+                files: Array.from(processingFiles)
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            console.log('Polling response:', data);
+            data.forEach(file => {
+                console.log('Processing file:', file.fileName, 'Status:', file.status);
+                if (file.status === 'completed') {
+                    console.log('File completed:', file.fileName);
+                    showFileProcessed(file.fileName);
+                    processingFiles.delete(file.fileName);
+                } else if (file.status === 'failed') {
+                    console.log('File failed:', file.fileName, file.error);
+                    showFileFailed(file.fileName, file.error || 'Processing failed');
+                    processingFiles.delete(file.fileName);
+                } else if (file.status === 'processing') {
+                    console.log('File still processing:', file.fileName);
+                    // Keep showing the processing status, don't remove from processingFiles
+                    // The existing showFileProcessing() call will continue to show
+                }
+            });
+        })
+        .catch(error => {
+            console.log('Polling error:', error);
+        });
+    }, 5000); // Poll every 5 seconds
+}
+
+function stopFileProcessingPolling() {
+    if (pollingInterval) {
+        clearInterval(pollingInterval);
+        pollingInterval = null;
+    }
+}
+
+// Start polling when page loads
+document.addEventListener('DOMContentLoaded', startFileProcessingPolling);
 </script>
 @endsection
