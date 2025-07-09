@@ -141,8 +141,10 @@ EOT;
         
         // If we have relevant content from uploaded files, prioritize it
         if ($relevantContent && !empty($relevantContent)) {
-            $fileContext = $this->buildFileContext($relevantContent);
-            $systemPrompt = $fileContext . "\n\n" . $systemPrompt;
+            // Only use the top 2 most relevant chunks
+            $fileContext = $this->buildFileContext(array_slice($relevantContent, 0, 2));
+            // Prepend the context and a strong instruction to the user prompt
+            $prompt = "IMPORTANT: Use ONLY the following file content to answer. If the answer is not present, say 'I don't know.'\n\n" . $fileContext . "\n\nQUESTION: " . $prompt;
         }
         
         $model = env('LLM_MODEL', 'tinyllama');
@@ -203,8 +205,10 @@ EOT;
         
         // If we have relevant content from uploaded files, prioritize it
         if ($relevantContent && !empty($relevantContent)) {
-            $fileContext = $this->buildFileContext($relevantContent);
-            $systemPrompt = $fileContext . "\n\n" . $systemPrompt;
+            // Only use the top 2 most relevant chunks
+            $fileContext = $this->buildFileContext(array_slice($relevantContent, 0, 2));
+            // Prepend the context and a strong instruction to the user prompt
+            $prompt = "IMPORTANT: Use ONLY the following file content to answer. If the answer is not present, say 'I don't know.'\n\n" . $fileContext . "\n\nQUESTION: " . $prompt;
         }
         
         try {
