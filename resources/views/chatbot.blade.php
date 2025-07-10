@@ -126,18 +126,45 @@ async function sendMessage(msg) {
     // Remove the loading message
     chatLog.removeChild(chatLog.lastChild);
     if (resp && resp.ok) {
-        const data = await resp.json();
-        let message = data.reply;
-        
-        // Add RAG information if used
-        if (data.rag_used) {
-            message += '\n\n[Response based on ' + data.rag_chunks_found + ' chunks from: ' + data.rag_files.join(', ') + ']';
-            console.log('RAG used:', data);
-        } else {
-            console.log('RAG not used - no relevant content found');
+        try {
+            const data = await resp.json();
+            
+            // Validate response structure
+            if (!data || typeof data !== 'object') {
+                throw new Error('Invalid response format from server');
+            }
+            
+            if (!data.reply) {
+                throw new Error('No reply field in response');
+            }
+            
+            let message = data.reply;
+            
+            // Add RAG information if used
+            if (data.rag_used) {
+                try {
+                    let files = Array.isArray(data.rag_files) ? data.rag_files.join(', ') : '';
+                    let chunksFound = typeof data.rag_chunks_found === 'number' ? data.rag_chunks_found : 'unknown';
+                    message += '\n\n[Response based on ' + chunksFound + ' chunks from: ' + files + ']';
+                    console.log('RAG used:', data);
+                } catch (ragError) {
+                    console.error('Error processing RAG data:', ragError);
+                    message += '\n\n[Response enhanced with uploaded documents]';
+                }
+            } else {
+                console.log('RAG not used - no relevant content found');
+            }
+            
+            addMessage(message, 'bot');
+        } catch (parseError) {
+            console.error('Error parsing response:', parseError);
+            addMessage('Error: Received invalid response from server. Please try again.', 'bot', true, () => {
+                sendMessage(msg);
+            });
+            if (autoRetry.checked) {
+                setTimeout(() => sendMessage(msg), 1000);
+            }
         }
-        
-        addMessage(message, 'bot');
     } else {
         addMessage('Error: Could not get response.', 'bot', true, () => {
             sendMessage(msg);
@@ -164,9 +191,21 @@ async function streamMessage(msg) {
         // Check if it's a JSON response (fallback from streaming)
         const contentType = response.headers.get('content-type');
         if (contentType && contentType.includes('application/json')) {
-            return response.json().then(data => {
-                addMessage(data.reply, 'bot');
-            });
+            try {
+                return response.json().then(data => {
+                    if (data && data.reply) {
+                        addMessage(data.reply, 'bot');
+                    } else {
+                        addMessage('Error: Invalid response format from server.', 'bot', true, retryCallback);
+                    }
+                }).catch(error => {
+                    console.error('Error parsing JSON fallback:', error);
+                    addMessage('Error: Could not parse server response.', 'bot', true, retryCallback);
+                });
+            } catch (error) {
+                console.error('Error handling JSON fallback:', error);
+                addMessage('Error: Could not get response.', 'bot', true, retryCallback);
+            }
         }
         addMessage('Error: Could not get response.', 'bot', true, retryCallback);
         if (autoRetry.checked) {
@@ -491,6 +530,18 @@ function hideRagIndicator() {
         indicator.style.display = 'none';
     }
 }
+
+// Global error handler for uncaught JavaScript errors
+window.addEventListener('error', function(event) {
+    console.error('Uncaught JavaScript error:', event.error);
+    addMessage('Error: An unexpected error occurred. Please refresh the page and try again.', 'bot', true);
+});
+
+// Global handler for unhandled promise rejections
+window.addEventListener('unhandledrejection', function(event) {
+    console.error('Unhandled promise rejection:', event.reason);
+    addMessage('Error: A network or processing error occurred. Please try again.', 'bot', true);
+});
 
 // Start polling when page loads
 document.addEventListener('DOMContentLoaded', function() {

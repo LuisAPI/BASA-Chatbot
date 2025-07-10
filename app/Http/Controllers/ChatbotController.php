@@ -149,38 +149,56 @@ EOT;
         
         $model = env('LLM_MODEL', 'tinyllama');
         $stream = filter_var(env('LLM_STREAM', false), FILTER_VALIDATE_BOOLEAN);
+        
         if (!$stream) {
-            $response = \Illuminate\Support\Facades\Http::timeout(60)->post('http://127.0.0.1:11434/api/generate', [
-                'model' => $model,
-                'system' => $systemPrompt,
-                'prompt' => $prompt,
-                'stream' => false
-            ]);
-            $data = $response->json();
-            $botReply = $data['response'] ?? 'No response from model.';
-        } else {
-            // Streaming mode: collect tokens as they arrive
-            $botReply = '';
-            $client = new \GuzzleHttp\Client(['timeout' => 65]);
-            $res = $client->post('http://127.0.0.1:11434/api/generate', [
-                'json' => [
+            // Non-streaming mode
+            try {
+                $response = \Illuminate\Support\Facades\Http::timeout(60)->post('http://127.0.0.1:11434/api/generate', [
                     'model' => $model,
                     'system' => $systemPrompt,
                     'prompt' => $prompt,
+                    'stream' => false
+                ]);
+                
+                if (!$response->ok()) {
+                    \Illuminate\Support\Facades\Log::error('Ollama API error: ' . $response->status() . ' - ' . $response->body());
+                    return 'Error: Could not connect to the language model. Please check if Ollama is running.';
+                }
+                
+                $data = $response->json();
+                $botReply = $data['response'] ?? 'No response from model.';
+            } catch (\Exception $e) {
+                \Illuminate\Support\Facades\Log::error('Error calling Ollama API: ' . $e->getMessage());
+                return 'Error: Could not connect to the language model. Please check if Ollama is running.';
+            }
+        } else {
+            // Streaming mode: collect tokens as they arrive
+            try {
+                $botReply = '';
+                $client = new \GuzzleHttp\Client(['timeout' => 65]);
+                $res = $client->post('http://127.0.0.1:11434/api/generate', [
+                    'json' => [
+                        'model' => $model,
+                        'system' => $systemPrompt,
+                        'prompt' => $prompt,
+                        'stream' => true
+                    ],
                     'stream' => true
-                ],
-                'stream' => true
-            ]);
-            $body = $res->getBody();
-            while (!$body->eof()) {
-                $line = trim($body->read(4096));
-                if ($line) {
-                    // Each line is a JSON object with a 'response' key
-                    $json = json_decode($line, true);
-                    if (isset($json['response'])) {
-                        $botReply .= $json['response'];
+                ]);
+                $body = $res->getBody();
+                while (!$body->eof()) {
+                    $line = trim($body->read(4096));
+                    if ($line) {
+                        // Each line is a JSON object with a 'response' key
+                        $json = json_decode($line, true);
+                        if (isset($json['response'])) {
+                            $botReply .= $json['response'];
+                        }
                     }
                 }
+            } catch (\Exception $e) {
+                \Illuminate\Support\Facades\Log::error('Error in streaming mode: ' . $e->getMessage());
+                return 'Error: Could not connect to the language model. Please check if Ollama is running.';
             }
         }
         $botReply = preg_replace('/^\s*Assistant:\s*/i', '', $botReply);
