@@ -128,6 +128,19 @@ You should not:
 - Discuss sensitive or confidential information.
 
 Always answer user questions about the agency's functions and government structure in well-written, properly capitalized, and clearly formatted paragraphs. Use professional language and correct grammar.
+
+IMPORTANT: When processing content from PowerPoint presentations, Excel spreadsheets, or other structured documents:
+
+1. **Structure your responses clearly** with proper paragraphs, bullet points, and sections
+2. **Organize information logically** by topic, timeline, or department
+3. **Use clear headings** to separate different sections
+4. **Convert fragmented text into coherent sentences** and paragraphs
+5. **Maintain professional formatting** with proper capitalization and punctuation
+6. **Group related information together** even if it appears scattered in the source
+7. **Add context and explanations** to make technical information more accessible
+8. **Use bullet points for lists** and numbered items for sequences
+9. **Highlight key dates, milestones, and status indicators** clearly
+10. **Summarize complex technical details** in simple, understandable language
 EOT;
     }
 
@@ -137,6 +150,9 @@ EOT;
      */
     private function sendToLLM(string $prompt, ?string $systemPrompt = null, ?array $relevantContent = null): string
     {
+        // Set execution time limit for this request
+        set_time_limit(120); // 2 minutes
+        
         $systemPrompt = $systemPrompt ?? $this->getSystemPrompt();
         
         // If we have relevant content from uploaded files, prioritize it
@@ -145,6 +161,17 @@ EOT;
             $fileContext = $this->buildFileContext(array_slice($relevantContent, 0, 2));
             // Prepend the context and a strong instruction to the user prompt
             $prompt = "IMPORTANT: Use ONLY the following file content to answer. If the answer is not present, say 'I don't know.'\n\n" . $fileContext . "\n\nQUESTION: " . $prompt;
+            // Add specific instructions for structured content
+            $prompt = "STRUCTURED CONTENT INSTRUCTIONS: The following content may be from PowerPoint presentations, Excel spreadsheets, or other structured documents. Please:\n" .
+                     "1. Organize the information into clear, logical sections with proper headings\n" .
+                     "2. Use bullet points for lists and numbered items for sequences\n" .
+                     "3. Convert fragmented text into coherent, readable sentences and paragraphs\n" .
+                     "4. Group related information together by department, module, or timeline\n" .
+                     "5. Highlight key dates, milestones, and status indicators clearly\n" .
+                     "6. Provide specific details from the content, not generic summaries\n" .
+                     "7. Use the exact names, dates, and statuses mentioned in the source\n" .
+                     "8. Structure the response with clear sections and subsections\n\n" .
+                     $prompt;
         }
         
         $model = env('LLM_MODEL', 'tinyllama');
@@ -153,7 +180,7 @@ EOT;
         if (!$stream) {
             // Non-streaming mode
             try {
-                $response = \Illuminate\Support\Facades\Http::timeout(60)->post('http://127.0.0.1:11434/api/generate', [
+                $response = \Illuminate\Support\Facades\Http::timeout(90)->post('http://127.0.0.1:11434/api/generate', [
                     'model' => $model,
                     'system' => $systemPrompt,
                     'prompt' => $prompt,
@@ -175,7 +202,11 @@ EOT;
             // Streaming mode: collect tokens as they arrive
             try {
                 $botReply = '';
-                $client = new \GuzzleHttp\Client(['timeout' => 65]);
+                $client = new \GuzzleHttp\Client([
+                    'timeout' => 90, // 90 seconds timeout
+                    'connect_timeout' => 10, // 10 seconds connection timeout
+                    'read_timeout' => 90 // 90 seconds read timeout
+                ]);
                 $res = $client->post('http://127.0.0.1:11434/api/generate', [
                     'json' => [
                         'model' => $model,
@@ -186,13 +217,26 @@ EOT;
                     'stream' => true
                 ]);
                 $body = $res->getBody();
+                $startTime = time();
+                $maxDuration = 90; // Maximum 90 seconds for the entire response
+                
                 while (!$body->eof()) {
+                    // Check if we've exceeded the maximum duration
+                    if (time() - $startTime > $maxDuration) {
+                        \Illuminate\Support\Facades\Log::warning('Stream timeout reached, stopping response');
+                        break;
+                    }
+                    
                     $line = trim($body->read(4096));
                     if ($line) {
                         // Each line is a JSON object with a 'response' key
                         $json = json_decode($line, true);
                         if (isset($json['response'])) {
                             $botReply .= $json['response'];
+                        }
+                        // Check if this is the final response
+                        if (isset($json['done']) && $json['done'] === true) {
+                            break;
                         }
                     }
                 }
@@ -214,6 +258,9 @@ EOT;
      */
     public function streamLLM(Request $request)
     {
+        // Set execution time limit for this request
+        set_time_limit(120); // 2 minutes
+        
         $prompt = $request->input('message');
         $systemPrompt = $this->getSystemPrompt();
         $model = env('LLM_MODEL', 'tinyllama');
@@ -227,11 +274,30 @@ EOT;
             $fileContext = $this->buildFileContext(array_slice($relevantContent, 0, 2));
             // Prepend the context and a strong instruction to the user prompt
             $prompt = "IMPORTANT: Use ONLY the following file content to answer. If the answer is not present, say 'I don't know.'\n\n" . $fileContext . "\n\nQUESTION: " . $prompt;
+            // Add specific instructions for structured content
+            $prompt = "STRUCTURED CONTENT INSTRUCTIONS: The following content may be from PowerPoint presentations, Excel spreadsheets, or other structured documents. Please:\n" .
+                     "1. Organize the information into clear, logical sections with proper headings\n" .
+                     "2. Use bullet points for lists and numbered items for sequences\n" .
+                     "3. Convert fragmented text into coherent, readable sentences and paragraphs\n" .
+                     "4. Group related information together by department, module, or timeline\n" .
+                     "5. Highlight key dates, milestones, and status indicators clearly\n" .
+                     "6. Provide specific details from the content, not generic summaries\n" .
+                     "7. Use the exact names, dates, and statuses mentioned in the source\n" .
+                     "8. Structure the response with clear sections and subsections\n\n" .
+                     $prompt;
         }
         
         try {
             return response()->stream(function () use ($prompt, $systemPrompt, $model) {
-                $client = new \GuzzleHttp\Client(['timeout' => 65]);
+                // Set execution time limit for the stream function
+                set_time_limit(120);
+                
+                $client = new \GuzzleHttp\Client([
+                    'timeout' => 90, // 90 seconds timeout
+                    'connect_timeout' => 10, // 10 seconds connection timeout
+                    'read_timeout' => 90 // 90 seconds read timeout
+                ]);
+                
                 $res = $client->post('http://127.0.0.1:11434/api/generate', [
                     'json' => [
                         'model' => $model,
@@ -241,9 +307,19 @@ EOT;
                     ],
                     'stream' => true
                 ]);
+                
                 $body = $res->getBody();
                 $buffer = '';
+                $startTime = time();
+                $maxDuration = 90; // Maximum 90 seconds for the entire response
+                
                 while (!$body->eof()) {
+                    // Check if we've exceeded the maximum duration
+                    if (time() - $startTime > $maxDuration) {
+                        \Illuminate\Support\Facades\Log::warning('Stream timeout reached, stopping response');
+                        break;
+                    }
+                    
                     $buffer .= $body->read(4096);
                     while (($pos = strpos($buffer, "\n")) !== false) {
                         $line = trim(substr($buffer, 0, $pos));
@@ -255,6 +331,10 @@ EOT;
                                 ob_flush();
                                 flush();
                             }
+                            // Check if this is the final response
+                            if (isset($json['done']) && $json['done'] === true) {
+                                return;
+                            }
                         }
                     }
                 }
@@ -264,10 +344,16 @@ EOT;
                 'X-Accel-Buffering' => 'no'
             ]);
         } catch (\Exception $e) {
-            // If streaming fails, fall back to non-streaming mode
-            \Illuminate\Support\Facades\Log::error('Streaming failed, falling back to non-streaming: ' . $e->getMessage());
-            $response = $this->sendToLLM($prompt, $systemPrompt);
-            return response()->json(['reply' => $response]);
+            \Illuminate\Support\Facades\Log::error('Streaming failed: ' . $e->getMessage());
+            
+            // Try non-streaming mode as fallback
+            try {
+                $response = $this->sendToLLM($prompt, $systemPrompt, $relevantContent);
+                return response()->json(['reply' => $response]);
+            } catch (\Exception $fallbackError) {
+                \Illuminate\Support\Facades\Log::error('Fallback also failed: ' . $fallbackError->getMessage());
+                return response()->json(['error' => 'Service temporarily unavailable. Please try again.'], 500);
+            }
         }
     }
 
