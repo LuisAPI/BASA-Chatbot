@@ -1,4 +1,4 @@
-<aside id="sidebarCollapse" class="col-md-2 bg-primary sidebar collapse border-end min-vh-100 mt-0">
+<aside id="sidebarCollapse" class="col-md-2 col-lg-2 bg-primary sidebar collapse border-end min-vh-100 mt-0">
     <div class="bg-white d-flex align-items-center justify-content-center py-3 border-bottom">
         <a href="https://depdev.gov.ph" target="_blank" rel="noopener" class="d-block">
             <img src="{{ asset('icons/login-logo-1.png') }}" alt="DEPDev Logo" style="height:8rem; width:auto; display:block;">

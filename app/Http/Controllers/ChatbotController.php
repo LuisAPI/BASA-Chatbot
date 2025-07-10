@@ -453,9 +453,89 @@ EOT;
             ->orderBy('source')
             ->get();
 
+        // Get preview content for each file (first chunk)
+        $filesWithPreviews = $files->map(function ($file) {
+            $firstChunk = \Illuminate\Support\Facades\DB::table('rag_chunks')
+                ->where('source', $file->source)
+                ->select('chunk', 'created_at')
+                ->orderBy('id')
+                ->first();
+            
+            $file->preview = $firstChunk ? $this->generatePreview($firstChunk->chunk) : '';
+            $file->file_type = $this->getFileType($file->source);
+            $file->uploaded_at = $firstChunk ? $firstChunk->created_at : null;
+            $file->file_size = $this->getFileSize($file->source);
+            
+            return $file;
+        });
+
         $totalChunks = \Illuminate\Support\Facades\DB::table('rag_chunks')->count();
         
-        return view('file-gallery', compact('files', 'totalChunks'));
+        return view('file-gallery', compact('filesWithPreviews', 'totalChunks'));
+    }
+
+    /**
+     * Generate a preview from chunk content.
+     */
+    private function generatePreview(string $chunk): string
+    {
+        // Clean and truncate the chunk for preview
+        $preview = strip_tags($chunk);
+        $preview = preg_replace('/\s+/', ' ', $preview); // Replace multiple spaces with single space
+        $preview = trim($preview);
+        
+        // Limit to 200 characters for preview
+        if (strlen($preview) > 200) {
+            $preview = substr($preview, 0, 200) . '...';
+        }
+        
+        return $preview;
+    }
+
+    /**
+     * Get file type based on extension.
+     */
+    private function getFileType(string $filename): string
+    {
+        $extension = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
+        
+        $typeMap = [
+            'pdf' => 'PDF Document',
+            'doc' => 'Word Document',
+            'docx' => 'Word Document',
+            'txt' => 'Text File',
+            'rtf' => 'Rich Text File',
+            'ppt' => 'PowerPoint Presentation',
+            'pptx' => 'PowerPoint Presentation',
+            'xls' => 'Excel Spreadsheet',
+            'xlsx' => 'Excel Spreadsheet',
+            'csv' => 'CSV File',
+            'html' => 'HTML File',
+            'htm' => 'HTML File',
+            'md' => 'Markdown File',
+            'json' => 'JSON File',
+            'xml' => 'XML File'
+        ];
+        
+        return $typeMap[$extension] ?? 'Document';
+    }
+
+    /**
+     * Get file size information (estimated from chunks).
+     */
+    private function getFileSize(string $filename): string
+    {
+        $totalSize = \Illuminate\Support\Facades\DB::table('rag_chunks')
+            ->where('source', $filename)
+            ->sum(\Illuminate\Support\Facades\DB::raw('LENGTH(chunk)'));
+        
+        if ($totalSize < 1024) {
+            return $totalSize . ' B';
+        } elseif ($totalSize < 1024 * 1024) {
+            return round($totalSize / 1024, 1) . ' KB';
+        } else {
+            return round($totalSize / (1024 * 1024), 1) . ' MB';
+        }
     }
 
     /**
