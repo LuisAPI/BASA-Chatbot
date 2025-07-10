@@ -13,7 +13,7 @@ class FixPdfParsingErrors extends Command
      *
      * @var string
      */
-    protected $signature = 'pdf:fix-parsing-errors {--dry-run : Show what would be fixed without making changes}';
+    protected $signature = 'pdf:fix-parsing-errors {--dry-run : Show what would be fixed without making changes} {--reprocess : Reprocess all files with improved chunking}';
 
     /**
      * The console command description.
@@ -30,6 +30,12 @@ class FixPdfParsingErrors extends Command
         $this->info('🔧 PDF Parsing Errors Fix Command');
         $this->info('================================');
         $this->newLine();
+
+        // Check if user wants to reprocess all files with improved chunking
+        if ($this->option('reprocess')) {
+            $this->reprocessForBetterStructure();
+            return 0;
+        }
 
         try {
             // Find all files with PDF parsing errors
@@ -127,5 +133,75 @@ class FixPdfParsingErrors extends Command
         $this->newLine();
         $this->info('✨ Command completed!');
         return 0;
+    }
+
+    /**
+     * Reprocess files with improved chunking for better structured content
+     */
+    public function reprocessForBetterStructure()
+    {
+        $this->info('🔄 Reprocessing files with improved chunking for better structured content...');
+        
+        // Get all processed files
+        $processedFiles = DB::table('rag_chunks')
+            ->select('source')
+            ->distinct()
+            ->get();
+        
+        if ($processedFiles->isEmpty()) {
+            $this->warn('No processed files found to reprocess.');
+            return;
+        }
+        
+        $this->info('Found ' . $processedFiles->count() . ' files to reprocess.');
+        
+        $progressBar = $this->output->createProgressBar($processedFiles->count());
+        $progressBar->start();
+        
+        $reprocessedCount = 0;
+        $errorCount = 0;
+        
+        foreach ($processedFiles as $file) {
+            $fileName = $file->source;
+            
+            try {
+                // Step 1: Delete existing chunks for this file
+                $deletedChunks = DB::table('rag_chunks')
+                    ->where('source', $fileName)
+                    ->delete();
+                
+                // Step 2: Find the actual file in storage
+                $storageFiles = glob(storage_path('app/private/uploads/*' . $fileName));
+                
+                if (empty($storageFiles)) {
+                    $this->error("File not found in storage: " . $fileName);
+                    $errorCount++;
+                    $progressBar->advance();
+                    continue;
+                }
+                
+                $actualFilePath = $storageFiles[0];
+                $relativePath = str_replace(storage_path('app/private/'), '', $actualFilePath);
+                
+                // Step 3: Dispatch the job with correct path
+                ProcessFileForRAG::dispatch($relativePath, $fileName);
+                
+                $reprocessedCount++;
+                
+            } catch (\Exception $e) {
+                $this->error("Error reprocessing {$fileName}: " . $e->getMessage());
+                $errorCount++;
+            }
+            
+            $progressBar->advance();
+        }
+        
+        $progressBar->finish();
+        $this->newLine(2);
+        
+        $this->info('📊 Reprocessing Summary:');
+        $this->line('   ✅ Successfully queued for reprocessing: ' . $reprocessedCount . ' files');
+        $this->line('   ❌ Errors: ' . $errorCount . ' files');
+        $this->line('   🔄 Files will be reprocessed with improved chunking for better structured content');
     }
 }
