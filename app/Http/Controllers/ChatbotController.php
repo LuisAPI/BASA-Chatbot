@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Services\Chunker;
 use App\Services\EmbeddingService;
 use App\Services\VectorSearchService;
+use App\Services\OllamaConnectionService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -12,6 +13,13 @@ use App\Jobs\ProcessFileForRAG;
 
 class ChatbotController extends Controller
 {
+    protected $ollamaService;
+
+    public function __construct()
+    {
+        $this->ollamaService = new OllamaConnectionService();
+    }
+
     public function index()
     {
         return view('chatbot');
@@ -20,6 +28,7 @@ class ChatbotController extends Controller
     public function ask(Request $request)
     {
         $userMessage = $request->input('message');
+        $selectedFiles = $request->input('selected_files', []); // New: array of selected file names
 
         if ($request->has('phpinfo')) {
             ob_start();
@@ -51,8 +60,11 @@ class ChatbotController extends Controller
             $userMessage = $question . " Title: {$webResult['title']}. Content: {$webResult['content']}";
         }
 
-        // Implement RAG: Search for relevant file content
-        $relevantContent = $this->searchRelevantFileContent($userMessage);
+        // Only perform RAG search if files are explicitly selected
+        $relevantContent = [];
+        if (!empty($selectedFiles)) {
+            $relevantContent = $this->searchRelevantFileContent($userMessage, $selectedFiles);
+        }
         
         $botReply = $this->sendToLLM($userMessage, null, $relevantContent);
         
@@ -60,7 +72,8 @@ class ChatbotController extends Controller
             'reply' => $botReply,
             'rag_used' => !empty($relevantContent),
             'rag_chunks_found' => count($relevantContent),
-            'rag_files' => !empty($relevantContent) ? array_unique(array_column($relevantContent, 'source')) : []
+            'rag_files' => !empty($relevantContent) ? array_unique(array_column($relevantContent, 'source')) : [],
+            'debug_enabled' => config('app.debug', false)
         ]);
     }
 
@@ -128,6 +141,19 @@ You should not:
 - Discuss sensitive or confidential information.
 
 Always answer user questions about the agency's functions and government structure in well-written, properly capitalized, and clearly formatted paragraphs. Use professional language and correct grammar.
+
+IMPORTANT: When processing content from PowerPoint presentations, Excel spreadsheets, or other structured documents:
+
+1. **Structure your responses clearly** with proper paragraphs, bullet points, and sections
+2. **Organize information logically** by topic, timeline, or department
+3. **Use clear headings** to separate different sections
+4. **Convert fragmented text into coherent sentences** and paragraphs
+5. **Maintain professional formatting** with proper capitalization and punctuation
+6. **Group related information together** even if it appears scattered in the source
+7. **Add context and explanations** to make technical information more accessible
+8. **Use bullet points for lists** and numbered items for sequences
+9. **Highlight key dates, milestones, and status indicators** clearly
+10. **Summarize complex technical details** in simple, understandable language
 EOT;
     }
 
@@ -137,6 +163,9 @@ EOT;
      */
     private function sendToLLM(string $prompt, ?string $systemPrompt = null, ?array $relevantContent = null): string
     {
+        // Set execution time limit for this request
+        set_time_limit(120); // 2 minutes
+        
         $systemPrompt = $systemPrompt ?? $this->getSystemPrompt();
         
         // If we have relevant content from uploaded files, prioritize it
@@ -145,42 +174,107 @@ EOT;
             $fileContext = $this->buildFileContext(array_slice($relevantContent, 0, 2));
             // Prepend the context and a strong instruction to the user prompt
             $prompt = "IMPORTANT: Use ONLY the following file content to answer. If the answer is not present, say 'I don't know.'\n\n" . $fileContext . "\n\nQUESTION: " . $prompt;
+            // Add specific instructions for structured content
+            $prompt = "STRUCTURED CONTENT INSTRUCTIONS: The following content may be from PowerPoint presentations, Excel spreadsheets, or other structured documents. Please:\n" .
+                     "1. Organize the information into clear, logical sections with proper headings\n" .
+                     "2. Use bullet points for lists and numbered items for sequences\n" .
+                     "3. Convert fragmented text into coherent, readable sentences and paragraphs\n" .
+                     "4. Group related information together by department, module, or timeline\n" .
+                     "5. Highlight key dates, milestones, and status indicators clearly\n" .
+                     "6. Provide specific details from the content, not generic summaries\n" .
+                     "7. Use the exact names, dates, and statuses mentioned in the source\n" .
+                     "8. Structure the response with clear sections and subsections\n\n" .
+                     $prompt;
         }
         
         $model = env('LLM_MODEL', 'tinyllama');
         $stream = filter_var(env('LLM_STREAM', false), FILTER_VALIDATE_BOOLEAN);
+        
         if (!$stream) {
-            $response = \Illuminate\Support\Facades\Http::timeout(60)->post('http://127.0.0.1:11434/api/generate', [
-                'model' => $model,
-                'system' => $systemPrompt,
-                'prompt' => $prompt,
-                'stream' => false
-            ]);
-            $data = $response->json();
-            $botReply = $data['response'] ?? 'No response from model.';
-        } else {
-            // Streaming mode: collect tokens as they arrive
-            $botReply = '';
-            $client = new \GuzzleHttp\Client(['timeout' => 65]);
-            $res = $client->post('http://127.0.0.1:11434/api/generate', [
-                'json' => [
+            // Non-streaming mode
+            try {
+                $endpoint = $this->ollamaService->getActiveEndpoint();
+                if (!$endpoint) {
+                    return 'Error: Could not connect to any Ollama instance. Please check if Ollama is running.';
+                }
+
+                $request = $this->ollamaService->createAuthenticatedRequest();
+                $response = $request->timeout(90)->post($endpoint . '/api/generate', [
                     'model' => $model,
                     'system' => $systemPrompt,
                     'prompt' => $prompt,
+                    'stream' => false
+                ]);
+                
+                if (!$response->ok()) {
+                    \Illuminate\Support\Facades\Log::error('Ollama API error: ' . $response->status() . ' - ' . $response->body());
+                    return 'Error: Could not connect to the language model. Please check if Ollama is running.';
+                }
+                
+                $data = $response->json();
+                $botReply = $data['response'] ?? 'No response from model.';
+            } catch (\Exception $e) {
+                \Illuminate\Support\Facades\Log::error('Error calling Ollama API: ' . $e->getMessage());
+                return 'Error: Could not connect to the language model. Please check if Ollama is running.';
+            }
+        } else {
+            // Streaming mode: collect tokens as they arrive
+            try {
+                $endpoint = $this->ollamaService->getActiveEndpoint();
+                if (!$endpoint) {
+                    return 'Error: Could not connect to any Ollama instance. Please check if Ollama is running.';
+                }
+
+                $botReply = '';
+                $client = new \GuzzleHttp\Client([
+                    'timeout' => 90, // 90 seconds timeout
+                    'connect_timeout' => 10, // 10 seconds connection timeout
+                    'read_timeout' => 90 // 90 seconds read timeout
+                ]);
+                
+                // Add authentication headers if required
+                $headers = ['Content-Type' => 'application/json'];
+                if (config('ollama.require_auth') && config('ollama.api_key')) {
+                    $headers['Authorization'] = 'Bearer ' . config('ollama.api_key');
+                }
+                
+                $res = $client->post($endpoint . '/api/generate', [
+                    'headers' => $headers,
+                    'json' => [
+                        'model' => $model,
+                        'system' => $systemPrompt,
+                        'prompt' => $prompt,
+                        'stream' => true
+                    ],
                     'stream' => true
-                ],
-                'stream' => true
-            ]);
-            $body = $res->getBody();
-            while (!$body->eof()) {
-                $line = trim($body->read(4096));
-                if ($line) {
-                    // Each line is a JSON object with a 'response' key
-                    $json = json_decode($line, true);
-                    if (isset($json['response'])) {
-                        $botReply .= $json['response'];
+                ]);
+                $body = $res->getBody();
+                $startTime = time();
+                $maxDuration = 90; // Maximum 90 seconds for the entire response
+                
+                while (!$body->eof()) {
+                    // Check if we've exceeded the maximum duration
+                    if (time() - $startTime > $maxDuration) {
+                        \Illuminate\Support\Facades\Log::warning('Stream timeout reached, stopping response');
+                        break;
+                    }
+                    
+                    $line = trim($body->read(4096));
+                    if ($line) {
+                        // Each line is a JSON object with a 'response' key
+                        $json = json_decode($line, true);
+                        if (isset($json['response'])) {
+                            $botReply .= $json['response'];
+                        }
+                        // Check if this is the final response
+                        if (isset($json['done']) && $json['done'] === true) {
+                            break;
+                        }
                     }
                 }
+            } catch (\Exception $e) {
+                \Illuminate\Support\Facades\Log::error('Error in streaming mode: ' . $e->getMessage());
+                return 'Error: Could not connect to the language model. Please check if Ollama is running.';
             }
         }
         $botReply = preg_replace('/^\s*Assistant:\s*/i', '', $botReply);
@@ -196,12 +290,19 @@ EOT;
      */
     public function streamLLM(Request $request)
     {
+        // Set execution time limit for this request
+        set_time_limit(120); // 2 minutes
+        
         $prompt = $request->input('message');
+        $selectedFiles = $request->input('selected_files', []); // New: array of selected file names
         $systemPrompt = $this->getSystemPrompt();
         $model = env('LLM_MODEL', 'tinyllama');
         
-        // Implement RAG: Search for relevant file content
-        $relevantContent = $this->searchRelevantFileContent($prompt);
+        // Only perform RAG search if files are explicitly selected
+        $relevantContent = [];
+        if (!empty($selectedFiles)) {
+            $relevantContent = $this->searchRelevantFileContent($prompt, $selectedFiles);
+        }
         
         // If we have relevant content from uploaded files, prioritize it
         if ($relevantContent && !empty($relevantContent)) {
@@ -209,12 +310,43 @@ EOT;
             $fileContext = $this->buildFileContext(array_slice($relevantContent, 0, 2));
             // Prepend the context and a strong instruction to the user prompt
             $prompt = "IMPORTANT: Use ONLY the following file content to answer. If the answer is not present, say 'I don't know.'\n\n" . $fileContext . "\n\nQUESTION: " . $prompt;
+            // Add specific instructions for structured content
+            $prompt = "STRUCTURED CONTENT INSTRUCTIONS: The following content may be from PowerPoint presentations, Excel spreadsheets, or other structured documents. Please:\n" .
+                     "1. Organize the information into clear, logical sections with proper headings\n" .
+                     "2. Use bullet points for lists and numbered items for sequences\n" .
+                     "3. Convert fragmented text into coherent, readable sentences and paragraphs\n" .
+                     "4. Group related information together by department, module, or timeline\n" .
+                     "5. Highlight key dates, milestones, and status indicators clearly\n" .
+                     "6. Provide specific details from the content, not generic summaries\n" .
+                     "7. Use the exact names, dates, and statuses mentioned in the source\n" .
+                     "8. Structure the response with clear sections and subsections\n\n" .
+                     $prompt;
         }
         
         try {
-            return response()->stream(function () use ($prompt, $systemPrompt, $model) {
-                $client = new \GuzzleHttp\Client(['timeout' => 65]);
-                $res = $client->post('http://127.0.0.1:11434/api/generate', [
+            $endpoint = $this->ollamaService->getActiveEndpoint();
+            if (!$endpoint) {
+                return response()->json(['error' => 'Could not connect to any Ollama instance. Please check if Ollama is running.'], 500);
+            }
+
+            return response()->stream(function () use ($prompt, $systemPrompt, $model, $endpoint) {
+                // Set execution time limit for the stream function
+                set_time_limit(120);
+                
+                $client = new \GuzzleHttp\Client([
+                    'timeout' => 90, // 90 seconds timeout
+                    'connect_timeout' => 10, // 10 seconds connection timeout
+                    'read_timeout' => 90 // 90 seconds read timeout
+                ]);
+                
+                // Add authentication headers if required
+                $headers = ['Content-Type' => 'application/json'];
+                if (config('ollama.require_auth') && config('ollama.api_key')) {
+                    $headers['Authorization'] = 'Bearer ' . config('ollama.api_key');
+                }
+                
+                $res = $client->post($endpoint . '/api/generate', [
+                    'headers' => $headers,
                     'json' => [
                         'model' => $model,
                         'system' => $systemPrompt,
@@ -223,9 +355,19 @@ EOT;
                     ],
                     'stream' => true
                 ]);
+                
                 $body = $res->getBody();
                 $buffer = '';
+                $startTime = time();
+                $maxDuration = 90; // Maximum 90 seconds for the entire response
+                
                 while (!$body->eof()) {
+                    // Check if we've exceeded the maximum duration
+                    if (time() - $startTime > $maxDuration) {
+                        \Illuminate\Support\Facades\Log::warning('Stream timeout reached, stopping response');
+                        break;
+                    }
+                    
                     $buffer .= $body->read(4096);
                     while (($pos = strpos($buffer, "\n")) !== false) {
                         $line = trim(substr($buffer, 0, $pos));
@@ -237,6 +379,10 @@ EOT;
                                 ob_flush();
                                 flush();
                             }
+                            // Check if this is the final response
+                            if (isset($json['done']) && $json['done'] === true) {
+                                return;
+                            }
                         }
                     }
                 }
@@ -246,10 +392,16 @@ EOT;
                 'X-Accel-Buffering' => 'no'
             ]);
         } catch (\Exception $e) {
-            // If streaming fails, fall back to non-streaming mode
-            \Illuminate\Support\Facades\Log::error('Streaming failed, falling back to non-streaming: ' . $e->getMessage());
-            $response = $this->sendToLLM($prompt, $systemPrompt);
-            return response()->json(['reply' => $response]);
+            \Illuminate\Support\Facades\Log::error('Streaming failed: ' . $e->getMessage());
+            
+            // Try non-streaming mode as fallback
+            try {
+                $response = $this->sendToLLM($prompt, $systemPrompt, $relevantContent);
+                return response()->json(['reply' => $response]);
+            } catch (\Exception $fallbackError) {
+                \Illuminate\Support\Facades\Log::error('Fallback also failed: ' . $fallbackError->getMessage());
+                return response()->json(['error' => 'Service temporarily unavailable. Please try again.'], 500);
+            }
         }
     }
 
@@ -339,6 +491,40 @@ EOT;
     }
 
     /**
+     * Get available files for selection in the chat interface.
+     */
+    public function getAvailableFiles()
+    {
+        try {
+            $files = \Illuminate\Support\Facades\DB::table('rag_chunks')
+                ->select('source', \Illuminate\Support\Facades\DB::raw('COUNT(*) as chunk_count'))
+                ->groupBy('source')
+                ->orderBy('source')
+                ->get()
+                ->map(function ($file) {
+                    return [
+                        'name' => $file->source,
+                        'chunk_count' => $file->chunk_count,
+                        'is_system_document' => $this->isSystemDocument($file->source),
+                        'file_type' => $this->getFileType($file->source),
+                        'file_size' => $this->getFileSize($file->source)
+                    ];
+                });
+            
+            return response()->json([
+                'files' => $files,
+                'total_files' => $files->count()
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'files' => [],
+                'total_files' => 0,
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
      * Show the file gallery page.
      */
     public function fileGallery()
@@ -349,9 +535,128 @@ EOT;
             ->orderBy('source')
             ->get();
 
+        // Get preview content for each file (first chunk)
+        $filesWithPreviews = $files->map(function ($file) {
+            $firstChunk = \Illuminate\Support\Facades\DB::table('rag_chunks')
+                ->where('source', $file->source)
+                ->select('chunk', 'created_at')
+                ->orderBy('id')
+                ->first();
+            
+            $file->preview = $firstChunk ? $this->generatePreview($firstChunk->chunk) : '';
+            $file->file_type = $this->getFileType($file->source);
+            $file->uploaded_at = $firstChunk ? $firstChunk->created_at : null;
+            $file->file_size = $this->getFileSize($file->source);
+            
+            // Determine if this is a system document or user upload
+            $file->is_system_document = $this->isSystemDocument($file->source);
+            
+            return $file;
+        });
+
         $totalChunks = \Illuminate\Support\Facades\DB::table('rag_chunks')->count();
         
-        return view('file-gallery', compact('files', 'totalChunks'));
+        return view('file-gallery', compact('filesWithPreviews', 'totalChunks'));
+    }
+
+    /**
+     * Generate a preview from chunk content.
+     */
+    private function generatePreview(string $chunk): string
+    {
+        // Clean and truncate the chunk for preview
+        $preview = strip_tags($chunk);
+        $preview = preg_replace('/\s+/', ' ', $preview); // Replace multiple spaces with single space
+        $preview = trim($preview);
+        
+        // Limit to 200 characters for preview
+        if (strlen($preview) > 200) {
+            $preview = substr($preview, 0, 200) . '...';
+        }
+        
+        return $preview;
+    }
+
+    /**
+     * Get file type based on extension.
+     */
+    private function getFileType(string $filename): string
+    {
+        $extension = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
+        
+        $typeMap = [
+            'pdf' => 'PDF Document',
+            'doc' => 'Word Document',
+            'docx' => 'Word Document',
+            'txt' => 'Text File',
+            'rtf' => 'Rich Text File',
+            'ppt' => 'PowerPoint Presentation',
+            'pptx' => 'PowerPoint Presentation',
+            'xls' => 'Excel Spreadsheet',
+            'xlsx' => 'Excel Spreadsheet',
+            'csv' => 'CSV File',
+            'html' => 'HTML File',
+            'htm' => 'HTML File',
+            'md' => 'Markdown File',
+            'json' => 'JSON File',
+            'xml' => 'XML File'
+        ];
+        
+        return $typeMap[$extension] ?? 'Document';
+    }
+
+    /**
+     * Get file size information (estimated from chunks).
+     */
+    private function getFileSize(string $filename): string
+    {
+        $totalSize = \Illuminate\Support\Facades\DB::table('rag_chunks')
+            ->where('source', $filename)
+            ->sum(\Illuminate\Support\Facades\DB::raw('LENGTH(chunk)'));
+        
+        if ($totalSize < 1024) {
+            return $totalSize . ' B';
+        } elseif ($totalSize < 1024 * 1024) {
+            return round($totalSize / 1024, 1) . ' KB';
+        } else {
+            return round($totalSize / (1024 * 1024), 1) . ' MB';
+        }
+    }
+
+    /**
+     * Check if a file is a system document (from public/documents).
+     */
+    private function isSystemDocument(string $filename): bool
+    {
+        // Check if the file exists in the public/documents directory or any subdirectory
+        $documentsPath = public_path('documents');
+        
+        // Search recursively for the file
+        return $this->fileExistsInDirectory($documentsPath, $filename);
+    }
+
+    /**
+     * Recursively search for a file in a directory and its subdirectories.
+     */
+    private function fileExistsInDirectory(string $directory, string $filename): bool
+    {
+        $items = \Illuminate\Support\Facades\File::files($directory);
+        
+        foreach ($items as $item) {
+            if ($item->getFilename() === $filename) {
+                return true;
+            }
+        }
+        
+        // Check subdirectories
+        $subdirectories = \Illuminate\Support\Facades\File::directories($directory);
+        foreach ($subdirectories as $subdirectory) {
+            if ($this->fileExistsInDirectory($subdirectory, $filename)) {
+                return true;
+            }
+        }
+        
+        return false;
     }
 
     /**
@@ -464,8 +769,9 @@ EOT;
 
     /**
      * Search for relevant content from uploaded files using vector similarity.
+     * If $selectedFiles is provided, only search within those specific files.
      */
-    private function searchRelevantFileContent(string $userMessage): array
+    private function searchRelevantFileContent(string $userMessage, array $selectedFiles = []): array
     {
         try {
             // First check if there are any processed files available
@@ -487,7 +793,7 @@ EOT;
             }
             
             // Search for similar chunks
-            $similarChunks = $vectorSearch->searchSimilar($queryEmbedding, 5); // Get top 5 most relevant chunks
+            $similarChunks = $vectorSearch->searchSimilar($queryEmbedding, 5, $selectedFiles); // Get top 5 most relevant chunks
             
             // Filter out low similarity results (threshold of 0.3)
             $relevantChunks = array_filter($similarChunks, function($chunk) {

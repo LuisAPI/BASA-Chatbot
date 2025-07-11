@@ -10,6 +10,70 @@
             background: url('/images/BP-DEPDev%20Zoom%20Background.jpg') no-repeat center center fixed;
             background-size: cover;
         }
+        
+        /* File selection modal styles */
+        .file-item {
+            transition: background-color 0.2s ease;
+        }
+        
+        .file-item:hover {
+            background-color: #f8f9fa;
+        }
+        
+        .file-item:last-child {
+            border-bottom: none !important;
+        }
+        
+        .file-name {
+            word-break: break-word;
+        }
+        
+        #fileSelectionContainer {
+            scrollbar-width: thin;
+            scrollbar-color: #dee2e6 #f8f9fa;
+        }
+        
+        #fileSelectionContainer::-webkit-scrollbar {
+            width: 6px;
+        }
+        
+        #fileSelectionContainer::-webkit-scrollbar-track {
+            background: #f8f9fa;
+        }
+        
+        #fileSelectionContainer::-webkit-scrollbar-thumb {
+            background: #dee2e6;
+            border-radius: 3px;
+        }
+        
+        #fileSelectionContainer::-webkit-scrollbar-thumb:hover {
+            background: #adb5bd;
+        }
+        
+        /* Action buttons styling */
+        .chat-content.bot .btn-sm {
+            padding: 0.25rem 0.5rem;
+            font-size: 0.75rem;
+            border-radius: 0.25rem;
+        }
+        
+        .chat-content.bot .btn-outline-secondary:hover {
+            background-color: #6c757d;
+            border-color: #6c757d;
+            color: white;
+        }
+        
+        .chat-content.bot .btn-outline-primary:hover {
+            background-color: #0d6efd;
+            border-color: #0d6efd;
+            color: white;
+        }
+        
+        .chat-content.bot .btn-success {
+            background-color: #198754;
+            border-color: #198754;
+            color: white;
+        }
     </style>
 @endsection
 
@@ -33,7 +97,7 @@
                 <button class="btn btn-primary d-flex align-items-center justify-content-center p-2" type="button" id="attachmentDropdown" data-bs-toggle="dropdown" aria-expanded="false" style="height: 38px; width: 38px;">
                     <i class="bi bi-paperclip" style="font-size: 1.3em;"></i>
                 </button>
-                <ul class="dropdown-menu" aria-labelledby="attachmentDropdown" style="min-width: 260px;">
+                <ul class="dropdown-menu" aria-labelledby="attachmentDropdown" style="min-width: 300px;">
                     <li><button class="dropdown-item" type="button" id="test-multiline">Test reply</button></li>
                     <li>
                         <div class="px-3 py-2">
@@ -44,10 +108,16 @@
                     </li>
                     <li>
                         <div class="px-3 py-2">
-                            <label for="file-attach" class="form-label mb-1">Upload File</label>
+                            <label for="file-attach" class="form-label mb-1">Upload New File</label>
                             <input type="file" class="form-control form-control-sm" id="file-attach" accept=".txt,.pdf,.doc,.docx,.rtf,.odt,.csv,.xlsx,.xls">
-                            <button class="btn btn-sm btn-primary mt-2 w-100" type="button" id="attachFileBtn">Attach File</button>
+                            <button class="btn btn-sm btn-primary mt-2 w-100" type="button" id="attachFileBtn">Upload & Process</button>
                         </div>
+                    </li>
+                    <li><hr class="dropdown-divider"></li>
+                    <li>
+                        <button class="dropdown-item" type="button" id="openFileSelectorBtn">
+                            <i class="bi bi-folder2-open me-2"></i>Select Existing Files
+                        </button>
                     </li>
                 </ul>
             </div>
@@ -59,10 +129,70 @@
             <label for="auto-retry" class="mb-0">Retry sending output if connection is lost</label>
         </div>
     </div>
-    <div class="basa-disclaimer-bar w-100 bg-light text-center py-2 small text-muted" style="position: sticky; bottom: 0; left: 0; z-index: 9; border-top: 1px solid #e0e0e0;">
-        BASA can make mistakes in providing information. Please check carefully.
+    <div class="basa-disclaimer-bar w-100 bg-light text-center fw-lighter py-2 small text-muted" style="position: sticky; bottom: 0; left: 0; z-index: 9; border-top: 1px solid #e0e0e0;">
+        BASA can make mistakes in providing information. Check carefully.
     </div>
     <div id="processing-files" class="mb-2"></div>
+</div>
+
+<!-- File Selection Modal -->
+<div class="modal fade" id="fileSelectionModal" tabindex="-1" aria-labelledby="fileSelectionModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="fileSelectionModalLabel">
+                    <i class="bi bi-folder2-open me-2"></i>Select Files for Context
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <!-- Search and Filter Bar -->
+                <div class="row mb-3">
+                    <div class="col-md-8">
+                        <div class="input-group">
+                            <span class="input-group-text"><i class="bi bi-search"></i></span>
+                            <input type="text" class="form-control" id="fileSearchInput" placeholder="Search files...">
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <select class="form-select" id="fileTypeFilter">
+                            <option value="">All Types</option>
+                            <option value="system">System Documents</option>
+                            <option value="user">User Uploads</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <!-- File Count and Selection Info -->
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <div>
+                        <span class="badge bg-primary" id="totalFilesCount">0 files</span>
+                        <span class="badge bg-success ms-2" id="selectedFilesCount">0 selected</span>
+                    </div>
+                    <div>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" id="selectAllBtn">Select All</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary ms-1" id="clearAllBtn">Clear All</button>
+                    </div>
+                </div>
+                
+                <!-- Files List -->
+                <div id="fileSelectionContainer" class="border rounded" style="max-height: 400px; overflow-y: auto;">
+                    <div class="text-center py-4">
+                        <div class="spinner-border text-primary" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                        <p class="mt-2 text-muted">Loading available files...</p>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="applyFileSelectionBtn">
+                    <i class="bi bi-check-circle me-1"></i>Apply Selection
+                </button>
+            </div>
+        </div>
+    </div>
 </div>
 @endsection
 
@@ -74,6 +204,21 @@ const messageInput = document.getElementById('message');
 const autoRetry = document.getElementById('auto-retry');
 const filePillContainer = document.getElementById('file-pill-container');
 const processingFilesDiv = document.getElementById('processing-files');
+
+// File selection modal variables
+const fileSelectionModal = document.getElementById('fileSelectionModal');
+const openFileSelectorBtn = document.getElementById('openFileSelectorBtn');
+const fileSelectionContainer = document.getElementById('fileSelectionContainer');
+const fileSearchInput = document.getElementById('fileSearchInput');
+const fileTypeFilter = document.getElementById('fileTypeFilter');
+const totalFilesCount = document.getElementById('totalFilesCount');
+const selectedFilesCount = document.getElementById('selectedFilesCount');
+const selectAllBtn = document.getElementById('selectAllBtn');
+const clearAllBtn = document.getElementById('clearAllBtn');
+const applyFileSelectionBtn = document.getElementById('applyFileSelectionBtn');
+
+let selectedFiles = new Set(); // Track selected files for RAG context
+let allAvailableFiles = []; // Store all available files for filtering
 
 function addMessage(text, sender, isError = false, retryCallback = null, isLoading = false) {
     const msgDiv = document.createElement('div');
@@ -101,6 +246,78 @@ function addMessage(text, sender, isError = false, retryCallback = null, isLoadi
             p.textContent = para.trim();
             content.appendChild(p);
         });
+        
+        // Add action buttons for bot responses (not for errors or loading states)
+        if (sender === 'bot' && !isError && !isLoading && text.trim()) {
+            const actionButtons = document.createElement('div');
+            actionButtons.className = 'mt-2 d-flex gap-2';
+            actionButtons.style.fontSize = '0.85em';
+            
+            // Copy to clipboard button
+            const copyBtn = document.createElement('button');
+            copyBtn.className = 'btn btn-outline-secondary btn-sm';
+            copyBtn.innerHTML = '<i class="bi bi-clipboard me-1"></i>Copy';
+            copyBtn.onclick = function() {
+                navigator.clipboard.writeText(text).then(() => {
+                    // Show success feedback
+                    const originalText = copyBtn.innerHTML;
+                    copyBtn.innerHTML = '<i class="bi bi-check me-1"></i>Copied!';
+                    copyBtn.className = 'btn btn-success btn-sm';
+                    setTimeout(() => {
+                        copyBtn.innerHTML = originalText;
+                        copyBtn.className = 'btn btn-outline-secondary btn-sm';
+                    }, 2000);
+                }).catch(err => {
+                    console.error('Failed to copy text: ', err);
+                    // Fallback for older browsers
+                    const textArea = document.createElement('textarea');
+                    textArea.value = text;
+                    document.body.appendChild(textArea);
+                    textArea.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(textArea);
+                    
+                    const originalText = copyBtn.innerHTML;
+                    copyBtn.innerHTML = '<i class="bi bi-check me-1"></i>Copied!';
+                    copyBtn.className = 'btn btn-success btn-sm';
+                    setTimeout(() => {
+                        copyBtn.innerHTML = originalText;
+                        copyBtn.className = 'btn btn-outline-secondary btn-sm';
+                    }, 2000);
+                });
+            };
+            
+            // Regenerate button
+            const regenerateBtn = document.createElement('button');
+            regenerateBtn.className = 'btn btn-outline-primary btn-sm';
+            regenerateBtn.innerHTML = '<i class="bi bi-arrow-clockwise me-1"></i>Regenerate';
+            regenerateBtn.onclick = function() {
+                // Find the user message that preceded this bot response
+                const messages = chatLog.querySelectorAll('.chat-message');
+                let userMessage = null;
+                
+                // Look backwards from current message to find the most recent user message
+                for (let i = messages.length - 1; i >= 0; i--) {
+                    if (messages[i].querySelector('.chat-avatar.user')) {
+                        userMessage = messages[i].querySelector('.chat-content.user').textContent;
+                        break;
+                    }
+                }
+                
+                if (userMessage) {
+                    // Remove the current bot response
+                    chatLog.removeChild(msgDiv);
+                    // Send the same user message again
+                    handleBotReply(userMessage);
+                } else {
+                    console.error('Could not find user message to regenerate');
+                }
+            };
+            
+            actionButtons.appendChild(copyBtn);
+            actionButtons.appendChild(regenerateBtn);
+            content.appendChild(actionButtons);
+        }
     }
     msgDiv.appendChild(avatar);
     msgDiv.appendChild(content);
@@ -118,7 +335,10 @@ async function sendMessage(msg) {
                 'Content-Type': 'application/json',
                 'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
             },
-            body: JSON.stringify({ message: msg })
+            body: JSON.stringify({ 
+                message: msg,
+                selected_files: Array.from(selectedFiles) // Include selected files for RAG context
+            })
         });
     } catch (e) {
         resp = null;
@@ -126,18 +346,48 @@ async function sendMessage(msg) {
     // Remove the loading message
     chatLog.removeChild(chatLog.lastChild);
     if (resp && resp.ok) {
-        const data = await resp.json();
-        let message = data.reply;
-        
-        // Add RAG information if used
-        if (data.rag_used) {
-            message += '\n\n[Response based on ' + data.rag_chunks_found + ' chunks from: ' + data.rag_files.join(', ') + ']';
-            console.log('RAG used:', data);
-        } else {
-            console.log('RAG not used - no relevant content found');
+        try {
+            const data = await resp.json();
+            
+            // Validate response structure
+            if (!data || typeof data !== 'object') {
+                throw new Error('Invalid response format from server');
+            }
+            
+            if (!data.reply) {
+                throw new Error('No reply field in response');
+            }
+            
+            let message = data.reply;
+            
+            // Add RAG information if used and debug is enabled
+            if (data.rag_used && data.debug_enabled) {
+                try {
+                    let files = Array.isArray(data.rag_files) ? data.rag_files.join(', ') : '';
+                    let chunksFound = typeof data.rag_chunks_found === 'number' ? data.rag_chunks_found : 'unknown';
+                    message += '\n\n[Response based on ' + chunksFound + ' chunks from: ' + files + ']';
+                    console.log('RAG used:', data);
+                } catch (ragError) {
+                    console.error('Error processing RAG data:', ragError);
+                    message += '\n\n[Response enhanced with uploaded documents]';
+                }
+            } else if (data.rag_used) {
+                // RAG was used but debug is disabled - just log to console
+                console.log('RAG used but debug disabled - not showing indicator');
+            } else {
+                console.log('RAG not used - no relevant content found');
+            }
+            
+            addMessage(message, 'bot');
+        } catch (parseError) {
+            console.error('Error parsing response:', parseError);
+            addMessage('Error: Received invalid response from server. Please try again.', 'bot', true, () => {
+                sendMessage(msg);
+            });
+            if (autoRetry.checked) {
+                setTimeout(() => sendMessage(msg), 1000);
+            }
         }
-        
-        addMessage(message, 'bot');
     } else {
         addMessage('Error: Could not get response.', 'bot', true, () => {
             sendMessage(msg);
@@ -157,16 +407,31 @@ async function streamMessage(msg) {
             'Content-Type': 'application/json',
             'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
         },
-        body: JSON.stringify({ message: msg })
+        body: JSON.stringify({ 
+            message: msg,
+            selected_files: Array.from(selectedFiles) // Include selected files for RAG context
+        })
     });
     chatLog.removeChild(chatLog.lastChild);
     if (!response.ok) {
         // Check if it's a JSON response (fallback from streaming)
         const contentType = response.headers.get('content-type');
         if (contentType && contentType.includes('application/json')) {
-            return response.json().then(data => {
-                addMessage(data.reply, 'bot');
-            });
+            try {
+                return response.json().then(data => {
+                    if (data && data.reply) {
+                        addMessage(data.reply, 'bot');
+                    } else {
+                        addMessage('Error: Invalid response format from server.', 'bot', true, retryCallback);
+                    }
+                }).catch(error => {
+                    console.error('Error parsing JSON fallback:', error);
+                    addMessage('Error: Could not parse server response.', 'bot', true, retryCallback);
+                });
+            } catch (error) {
+                console.error('Error handling JSON fallback:', error);
+                addMessage('Error: Could not get response.', 'bot', true, retryCallback);
+            }
         }
         addMessage('Error: Could not get response.', 'bot', true, retryCallback);
         if (autoRetry.checked) {
@@ -195,7 +460,15 @@ async function streamMessage(msg) {
             result += chunk;
             // Update the bot message in the UI
             if (chatLog.lastChild && chatLog.lastChild.classList.contains('chat-message') && chatLog.lastChild.querySelector('.chat-avatar.bot')) {
-                chatLog.lastChild.querySelector('.chat-content.bot').textContent = result;
+                const contentDiv = chatLog.lastChild.querySelector('.chat-content.bot');
+                // Clear existing content and add paragraphs
+                contentDiv.innerHTML = '';
+                result.split(/\n{2,}/).forEach((para, idx, arr) => {
+                    const p = document.createElement('p');
+                    p.style.marginBottom = idx < arr.length - 1 ? '1em' : '0';
+                    p.textContent = para.trim();
+                    contentDiv.appendChild(p);
+                });
             } else {
                 // If for some reason the last message is not the bot, add a new one
                 addMessage(result, 'bot');
@@ -208,7 +481,7 @@ async function streamMessage(msg) {
                 setTimeout(() => streamMessage(msg), 1000);
             }
         } else {
-            // Finalize the message with addMessage to standardize formatting
+            // Finalize the message with addMessage to standardize formatting and add buttons
             chatLog.removeChild(chatLog.lastChild);
             addMessage(result, 'bot');
         }
@@ -491,6 +764,256 @@ function hideRagIndicator() {
         indicator.style.display = 'none';
     }
 }
+
+// Global error handler for uncaught JavaScript errors
+window.addEventListener('error', function(event) {
+    console.error('Uncaught JavaScript error:', event.error);
+    addMessage('Error: An unexpected error occurred. Please refresh the page and try again.', 'bot', true);
+});
+
+// Global handler for unhandled promise rejections
+window.addEventListener('unhandledrejection', function(event) {
+    console.error('Unhandled promise rejection:', event.reason);
+    addMessage('Error: A network or processing error occurred. Please try again.', 'bot', true);
+});
+
+// File selection modal functions
+function openFileSelector() {
+    loadAvailableFiles();
+    const modal = new bootstrap.Modal(fileSelectionModal);
+    modal.show();
+}
+
+function loadAvailableFiles() {
+    fileSelectionContainer.innerHTML = `
+        <div class="text-center py-4">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <p class="mt-2 text-muted">Loading available files...</p>
+        </div>
+    `;
+    
+    fetch('/chatbot/available-files')
+        .then(response => response.json())
+        .then(data => {
+            allAvailableFiles = data.files || [];
+            renderFileSelection(allAvailableFiles);
+            updateFileCounts();
+        })
+        .catch(error => {
+            console.error('Error loading files:', error);
+            fileSelectionContainer.innerHTML = `
+                <div class="text-center py-4">
+                    <i class="bi bi-exclamation-triangle text-danger" style="font-size: 2rem;"></i>
+                    <p class="mt-2 text-danger">Error loading files. Please try again.</p>
+                </div>
+            `;
+        });
+}
+
+function renderFileSelection(files) {
+    fileSelectionContainer.innerHTML = '';
+    
+    if (files.length === 0) {
+        fileSelectionContainer.innerHTML = `
+            <div class="text-center py-4">
+                <i class="bi bi-folder-x text-muted" style="font-size: 2rem;"></i>
+                <p class="mt-2 text-muted">No files available. Upload some files first.</p>
+            </div>
+        `;
+        return;
+    }
+    
+    files.forEach(file => {
+        const fileDiv = document.createElement('div');
+        fileDiv.className = 'file-item p-3 border-bottom';
+        fileDiv.style.cursor = 'pointer';
+        fileDiv.onclick = function(e) {
+            // Don't trigger if clicking on the checkbox itself
+            if (e.target.type === 'checkbox') {
+                return;
+            }
+            // Don't trigger if clicking on the close button or other interactive elements
+            if (e.target.tagName === 'BUTTON' || e.target.closest('button')) {
+                return;
+            }
+            const checkbox = this.querySelector('input[type="checkbox"]');
+            checkbox.checked = !checkbox.checked;
+            checkbox.dispatchEvent(new Event('change'));
+        };
+        
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.className = 'form-check-input me-3';
+        checkbox.id = 'file-' + file.name.replace(/[^a-zA-Z0-9]/g, '_');
+        checkbox.value = file.name;
+        checkbox.checked = selectedFiles.has(file.name);
+        checkbox.addEventListener('change', function(e) {
+            e.stopPropagation();
+            const fileName = this.value;
+            
+            if (this.checked) {
+                selectedFiles.add(fileName);
+                console.log('Added file:', fileName, 'Total selected:', selectedFiles.size);
+            } else {
+                selectedFiles.delete(fileName);
+                console.log('Removed file:', fileName, 'Total selected:', selectedFiles.size);
+            }
+            
+            updateSelectedFilesDisplay();
+            updateFileCounts();
+        });
+        
+        const badge = file.is_system_document ? 
+            '<span class="badge bg-primary me-2">System</span>' : 
+            '<span class="badge bg-secondary me-2">User</span>';
+        
+        const fileIcon = file.is_system_document ? 'bi-shield-check' : 'bi-file-earmark-text';
+        
+        // Append the checkbox first
+        fileDiv.appendChild(checkbox);
+        
+        // Create the content div
+        const contentDiv = document.createElement('div');
+        contentDiv.className = 'd-flex align-items-center';
+        contentDiv.innerHTML = `
+            <i class="bi ${fileIcon} me-2 ${file.is_system_document ? 'text-primary' : 'text-secondary'}"></i>
+            <div class="flex-grow-1">
+                <div class="d-flex align-items-center mb-1">
+                    ${badge}
+                    <strong class="file-name">${file.name}</strong>
+                </div>
+                <div class="text-muted small">
+                    <i class="bi bi-file-earmark me-1"></i>${file.file_type}
+                    <span class="mx-2">•</span>
+                    <i class="bi bi-collection me-1"></i>${file.chunk_count} chunks
+                    <span class="mx-2">•</span>
+                    <i class="bi bi-hdd me-1"></i>${file.file_size}
+                </div>
+            </div>
+        `;
+        
+        fileDiv.appendChild(contentDiv);
+        fileSelectionContainer.appendChild(fileDiv);
+    });
+    
+    updateSelectedFilesDisplay();
+}
+
+function updateSelectedFilesDisplay() {
+    // Update the file pill container to show selected files
+    if (!filePillContainer) return;
+    
+    filePillContainer.innerHTML = '';
+    
+    if (selectedFiles.size > 0) {
+        selectedFiles.forEach(fileName => {
+            const pill = document.createElement('span');
+            pill.className = 'badge rounded-pill bg-success text-white d-inline-flex align-items-center px-3 py-2 me-2 mb-2';
+            pill.style.fontSize = '0.9em';
+            pill.textContent = fileName;
+            
+            const removeBtn = document.createElement('button');
+            removeBtn.type = 'button';
+            removeBtn.className = 'btn-close btn-close-white ms-2';
+            removeBtn.style.fontSize = '0.8em';
+            removeBtn.setAttribute('aria-label', 'Remove');
+            removeBtn.onclick = function() {
+                selectedFiles.delete(fileName);
+                updateSelectedFilesDisplay();
+                updateFileCounts();
+                // Update checkbox state in modal
+                const checkbox = document.getElementById('file-' + fileName.replace(/[^a-zA-Z0-9]/g, '_'));
+                if (checkbox) checkbox.checked = false;
+            };
+            
+            pill.appendChild(removeBtn);
+            filePillContainer.appendChild(pill);
+        });
+        
+        filePillContainer.style.display = 'block';
+        console.log('Updated file pills - showing', selectedFiles.size, 'files');
+    } else {
+        filePillContainer.style.display = 'none';
+        console.log('Updated file pills - none selected');
+    }
+}
+
+function updateFileCounts() {
+    if (totalFilesCount) {
+        totalFilesCount.textContent = `${allAvailableFiles.length} files`;
+    }
+    if (selectedFilesCount) {
+        selectedFilesCount.textContent = `${selectedFiles.size} selected`;
+    }
+    console.log('Updated file counts - Total:', allAvailableFiles.length, 'Selected:', selectedFiles.size);
+}
+
+function filterFiles() {
+    const searchTerm = fileSearchInput.value.toLowerCase();
+    const typeFilter = fileTypeFilter.value;
+    
+    const filteredFiles = allAvailableFiles.filter(file => {
+        const matchesSearch = file.name.toLowerCase().includes(searchTerm);
+        const matchesType = !typeFilter || 
+            (typeFilter === 'system' && file.is_system_document) ||
+            (typeFilter === 'user' && !file.is_system_document);
+        
+        return matchesSearch && matchesType;
+    });
+    
+    renderFileSelection(filteredFiles);
+}
+
+function selectAllFiles() {
+    const visibleCheckboxes = fileSelectionContainer.querySelectorAll('input[type="checkbox"]');
+    visibleCheckboxes.forEach(checkbox => {
+        checkbox.checked = true;
+        selectedFiles.add(checkbox.value);
+    });
+    updateSelectedFilesDisplay();
+    updateFileCounts();
+    console.log('Select All - Total selected:', selectedFiles.size);
+}
+
+function clearAllFiles() {
+    const visibleCheckboxes = fileSelectionContainer.querySelectorAll('input[type="checkbox"]');
+    visibleCheckboxes.forEach(checkbox => {
+        checkbox.checked = false;
+        selectedFiles.delete(checkbox.value);
+    });
+    updateSelectedFilesDisplay();
+    updateFileCounts();
+    console.log('Clear All - Total selected:', selectedFiles.size);
+}
+
+// Add event listeners for file selection modal
+openFileSelectorBtn && openFileSelectorBtn.addEventListener('click', function() {
+    openFileSelector();
+});
+
+fileSearchInput && fileSearchInput.addEventListener('input', function() {
+    filterFiles();
+});
+
+fileTypeFilter && fileTypeFilter.addEventListener('change', function() {
+    filterFiles();
+});
+
+selectAllBtn && selectAllBtn.addEventListener('click', function() {
+    selectAllFiles();
+});
+
+clearAllBtn && clearAllBtn.addEventListener('click', function() {
+    clearAllFiles();
+});
+
+applyFileSelectionBtn && applyFileSelectionBtn.addEventListener('click', function() {
+    const modal = bootstrap.Modal.getInstance(fileSelectionModal);
+    modal.hide();
+    updateSelectedFilesDisplay();
+});
 
 // Start polling when page loads
 document.addEventListener('DOMContentLoaded', function() {

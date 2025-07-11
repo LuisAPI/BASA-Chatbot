@@ -1,6 +1,6 @@
 <nav class="navbar navbar-expand-lg navbar-light bg-light border-bottom position-relative">
     <div class="d-flex align-items-center ps-3 flex-grow-1" style="height: 100%;">
-        <button class="btn btn-primary d-md-none me-2" type="button" data-bs-toggle="collapse" data-bs-target="#sidebarCollapse" aria-controls="sidebarCollapse" aria-expanded="false" aria-label="Toggle sidebar">
+        <button class="btn btn-primary d-none" type="button" data-bs-toggle="collapse" data-bs-target="#sidebarCollapse" aria-controls="sidebarCollapse" aria-expanded="false" aria-label="Toggle sidebar" id="sidebarToggleBtn">
             <span class="navbar-toggler-icon"></span>
         </button>
         <a class="navbar-brand fw-bold text-primary d-flex align-items-center gap-2" href="/">
