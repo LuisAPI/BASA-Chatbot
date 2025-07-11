@@ -466,6 +466,9 @@ EOT;
             $file->uploaded_at = $firstChunk ? $firstChunk->created_at : null;
             $file->file_size = $this->getFileSize($file->source);
             
+            // Determine if this is a system document or user upload
+            $file->is_system_document = $this->isSystemDocument($file->source);
+            
             return $file;
         });
 
@@ -536,6 +539,42 @@ EOT;
         } else {
             return round($totalSize / (1024 * 1024), 1) . ' MB';
         }
+    }
+
+    /**
+     * Check if a file is a system document (from public/documents).
+     */
+    private function isSystemDocument(string $filename): bool
+    {
+        // Check if the file exists in the public/documents directory or any subdirectory
+        $documentsPath = public_path('documents');
+        
+        // Search recursively for the file
+        return $this->fileExistsInDirectory($documentsPath, $filename);
+    }
+
+    /**
+     * Recursively search for a file in a directory and its subdirectories.
+     */
+    private function fileExistsInDirectory(string $directory, string $filename): bool
+    {
+        $items = \Illuminate\Support\Facades\File::files($directory);
+        
+        foreach ($items as $item) {
+            if ($item->getFilename() === $filename) {
+                return true;
+            }
+        }
+        
+        // Check subdirectories
+        $subdirectories = \Illuminate\Support\Facades\File::directories($directory);
+        foreach ($subdirectories as $subdirectory) {
+            if ($this->fileExistsInDirectory($subdirectory, $filename)) {
+                return true;
+            }
+        }
+        
+        return false;
     }
 
     /**

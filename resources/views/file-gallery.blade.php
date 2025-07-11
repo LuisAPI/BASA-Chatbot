@@ -45,13 +45,18 @@
                     <div class="row">
                         @foreach($filesWithPreviews as $file)
                             <div class="col-md-6 col-lg-4 mb-4">
-                                <div class="card h-100 file-card">
-                                    <div class="card-header d-flex justify-content-between align-items-center">
+                                <div class="card h-100 file-card {{ $file->is_system_document ? 'border-primary' : '' }}">
+                                    <div class="card-header d-flex justify-content-between align-items-center {{ $file->is_system_document ? 'bg-primary text-white' : '' }}">
                                         <h6 class="mb-0">
-                                            <i class="bi bi-file-earmark-text me-2"></i>
+                                            <i class="bi {{ $file->is_system_document ? 'bi-shield-check' : 'bi-file-earmark-text' }} me-2"></i>
                                             {{ Str::limit($file->source, 30) }}
                                         </h6>
-                                        <span class="badge bg-secondary">{{ $file->chunk_count }} chunks</span>
+                                        <div class="d-flex align-items-center">
+                                            @if($file->is_system_document)
+                                                <span class="badge bg-light text-primary me-1">System</span>
+                                            @endif
+                                            <span class="badge {{ $file->is_system_document ? 'bg-light text-primary' : 'bg-secondary' }}">{{ $file->chunk_count }} chunks</span>
+                                        </div>
                                     </div>
                                     <div class="card-body">
                                         <div class="mb-2">
@@ -108,12 +113,17 @@
                             </thead>
                             <tbody>
                                 @foreach($filesWithPreviews as $file)
-                                    <tr>
+                                    <tr class="{{ $file->is_system_document ? 'table-primary' : '' }}">
                                         <td>
                                             <div class="d-flex align-items-center">
-                                                <i class="bi bi-file-earmark-text me-2 text-primary"></i>
+                                                <i class="bi {{ $file->is_system_document ? 'bi-shield-check' : 'bi-file-earmark-text' }} me-2 {{ $file->is_system_document ? 'text-primary' : 'text-primary' }}"></i>
                                                 <div>
-                                                    <div class="fw-medium">{{ $file->source }}</div>
+                                                    <div class="fw-medium">
+                                                        {{ $file->source }}
+                                                        @if($file->is_system_document)
+                                                            <span class="badge bg-primary ms-2">System</span>
+                                                        @endif
+                                                    </div>
                                                 </div>
                                             </div>
                                         </td>
