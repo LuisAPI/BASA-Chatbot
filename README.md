@@ -21,7 +21,43 @@ BASA is an internal chatbot for the Philippine Department of Economy, Planning a
 
 ## Getting Started
 
-### 1. Clone and install dependencies
+### Option A: Quick Setup (Recommended)
+
+For a complete automated setup:
+
+```sh
+# 1. Clone and install dependencies
+git clone https://luisapi-admin@bitbucket.org/luisapi/basa-chatbot.git
+cd basa-chatbot
+composer install
+npm install
+
+# 2. Environment configuration
+cp .env.example .env
+# Edit .env to configure your settings
+
+# 3. Run comprehensive setup
+php artisan setup:basa
+```
+
+The `setup:basa` command will automatically:
+- Check database connection
+- Run migrations
+- Set up queue tables
+- Generate application key
+- Process default government documents
+- Clear application caches
+- Create required directories
+
+**Options:**
+- `--skip-documents` - Skip processing default documents
+- `--force` - Force reprocessing of existing documents
+
+### Option B: Step-by-Step Setup
+
+If the automated setup fails or you prefer manual control:
+
+#### 1. Clone and install dependencies
 ```sh
 git clone https://luisapi-admin@bitbucket.org/luisapi/basa-chatbot.git
 cd basa-chatbot
@@ -29,7 +65,7 @@ composer install
 npm install
 ```
 
-### 2. Environment configuration
+#### 2. Environment configuration
 
 ```sh
 cp .env.example .env
@@ -45,13 +81,13 @@ Then edit `.env` to configure:
 * Ollama endpoint (`http://localhost:11434`)
 * Broadcasting driver (`BROADCAST_DRIVER=redis`)
 
-### 3. Database setup
+#### 3. Database setup
 
 ```sh
 php artisan migrate
 ```
 
-### 4. Optional: Enable file processing queue
+#### 4. Optional: Enable file processing queue
 
 ```sh
 php artisan queue:table
@@ -59,7 +95,15 @@ php artisan migrate
 php artisan queue:work
 ```
 
-### 5. Start servers
+#### 5. Process default documents (Optional)
+
+```sh
+php artisan documents:process-default
+```
+
+This processes bundled government documents for the RAG system.
+
+#### 6. Start servers
 
 **Option A: Use the start script (Windows)**
 ```sh
@@ -94,6 +138,50 @@ ollama pull nomic-embed-text
 
 Then access: [http://localhost:8080/chatbot](http://localhost:8080/chatbot)
 
+## Default Government Documents
+
+BASA comes bundled with essential government documents that provide the core knowledge base for the chatbot. These documents are automatically available in every instance without requiring manual uploads.
+
+### Location
+Default documents are stored in `public/documents/` and are version-controlled with the application.
+
+### Directory Structure
+Documents can be organized in subdirectories for better organization:
+```
+public/documents/
+├── pdp/          # Philippine Development Plans
+├── oc/           # Office Circulars
+├── policies/     # Government Policies
+└── README.md
+```
+
+### Included Documents
+- **Philippine Development Plan (PDP) 2023-2028** - The country's medium-term development plan
+- Other government policy documents and reference materials
+
+### Processing Default Documents
+To process the bundled documents for the RAG system:
+
+```sh
+# Process all default documents
+php artisan documents:process-default
+
+# Force reprocessing of existing documents
+php artisan documents:process-default --force
+```
+
+### Adding New Default Documents
+1. Place PDF files in `public/documents/`
+2. Run `php artisan documents:process-default`
+3. Documents are immediately available in the chatbot
+
+### Visual Indicators
+In the File Gallery, system documents are marked with:
+- Blue border and header in Grid view
+- "System" badge
+- Shield icon instead of file icon
+- Highlighted row in List view
+
 ## File Gallery
 
 The enhanced File Gallery provides a Google Drive-style interface for managing uploaded documents:
@@ -102,6 +190,7 @@ The enhanced File Gallery provides a Google Drive-style interface for managing u
 - **Static Previews**: Each file shows a preview of its content (first 200 characters)
 - **View Toggle**: Switch between Grid view (cards) and List view (table)
 - **File Information**: File type, size, upload date, and chunk count
+- **System Documents**: Visual distinction between user uploads and bundled documents
 - **Responsive Design**: Works on desktop and mobile devices
 - **Hover Effects**: Interactive file cards with smooth animations
 
@@ -115,6 +204,7 @@ Navigate to the File Gallery via:
 2. **List View**: Table format with all file details in columns
 3. **View Chunks**: Click "View Chunks" to see detailed file content
 4. **File Details**: Hover over cards to see additional information
+5. **System Documents**: Blue-highlighted cards indicate bundled government documents
 
 ## Real-time Broadcasting
 
