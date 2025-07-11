@@ -6,6 +6,7 @@ BASA is an internal chatbot for the Philippine Department of Economy, Planning a
 - Modern, responsive chat UI (ChatGPT-style)
 - File upload and document parsing for PDF, DOCX, XLSX, and other formats
 - Retrieval-Augmented Generation (RAG) powered by `nomic-embed-text` for semantic chunk search
+- Enhanced file gallery with static previews and grid/list view toggle
 - Animated loading indicator and retry on failure
 - Auto-streaming support for real-time token responses
 - Background queue processing for large documents
@@ -92,6 +93,28 @@ ollama pull nomic-embed-text
 > `nomic-embed-text` is used for vector embedding in RAG.
 
 Then access: [http://localhost:8080/chatbot](http://localhost:8080/chatbot)
+
+## File Gallery
+
+The enhanced File Gallery provides a Google Drive-style interface for managing uploaded documents:
+
+### Features
+- **Static Previews**: Each file shows a preview of its content (first 200 characters)
+- **View Toggle**: Switch between Grid view (cards) and List view (table)
+- **File Information**: File type, size, upload date, and chunk count
+- **Responsive Design**: Works on desktop and mobile devices
+- **Hover Effects**: Interactive file cards with smooth animations
+
+### Access
+Navigate to the File Gallery via:
+- Sidebar menu: "File Gallery" link
+- Direct URL: `http://localhost:8080/chatbot/files`
+
+### Usage
+1. **Grid View** (default): Card-based layout showing file previews
+2. **List View**: Table format with all file details in columns
+3. **View Chunks**: Click "View Chunks" to see detailed file content
+4. **File Details**: Hover over cards to see additional information
 
 ## Real-time Broadcasting
 

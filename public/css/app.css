@@ -99,3 +99,96 @@
     font-weight: 600;
     color: #0e4384;
 }
+
+/* Responsive layout coordination with JavaScript */
+/* Large screens and above (≥992px) - Sidebar always visible, toggle hidden */
+@media (min-width: 992px) {
+    #sidebarCollapse {
+        display: block !important;
+    }
+    
+    #sidebarToggleBtn {
+        display: none !important;
+    }
+    
+    .col-md-10 {
+        flex: 0 0 83.333333%;
+        max-width: 83.333333%;
+    }
+}
+
+/* Medium screens (768px - 991px) - Sidebar hidden by default, toggle visible */
+@media (min-width: 768px) and (max-width: 991.98px) {
+    #sidebarCollapse {
+        display: none !important;
+    }
+    
+    #sidebarCollapse.show {
+        display: block !important;
+        position: fixed;
+        top: 0;
+        left: 0;
+        height: 100vh;
+        z-index: 1050;
+        width: 280px;
+        box-shadow: 2px 0 10px rgba(0,0,0,0.1);
+    }
+    
+    #sidebarToggleBtn {
+        display: block !important;
+    }
+    
+    .col-md-10 {
+        flex: 0 0 100%;
+        max-width: 100%;
+    }
+}
+
+/* Small screens and below (<768px) - Sidebar hidden by default, toggle visible */
+@media (max-width: 767.98px) {
+    #sidebarCollapse {
+        display: none !important;
+    }
+    
+    #sidebarCollapse.show {
+        display: block !important;
+        position: fixed;
+        top: 0;
+        left: 0;
+        height: 100vh;
+        z-index: 1050;
+        width: 280px;
+        box-shadow: 2px 0 10px rgba(0,0,0,0.1);
+    }
+    
+    #sidebarToggleBtn {
+        display: block !important;
+    }
+    
+    .col-md-10 {
+        flex: 0 0 100%;
+        max-width: 100%;
+    }
+    
+    /* Ensure proper stacking on small screens */
+    .container-fluid .row {
+        flex-direction: column;
+    }
+}
+
+/* Ensure proper sidebar behavior */
+.sidebar {
+    transition: all 0.3s ease;
+}
+
+/* Overlay for mobile sidebar (new approach) */
+.sidebar-overlay {
+    display: none;
+    position: fixed;
+    top: 0; left: 0; width: 100vw; height: 100vh;
+    background: rgba(0,0,0,0.5);
+    z-index: 1040;
+}
+.sidebar-overlay.active {
+    display: block;
+}
