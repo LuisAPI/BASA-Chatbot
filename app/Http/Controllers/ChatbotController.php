@@ -28,6 +28,7 @@ class ChatbotController extends Controller
     public function ask(Request $request)
     {
         $userMessage = $request->input('message');
+        $selectedFiles = $request->input('selected_files', []); // New: array of selected file names
 
         if ($request->has('phpinfo')) {
             ob_start();
@@ -59,8 +60,11 @@ class ChatbotController extends Controller
             $userMessage = $question . " Title: {$webResult['title']}. Content: {$webResult['content']}";
         }
 
-        // Implement RAG: Search for relevant file content
-        $relevantContent = $this->searchRelevantFileContent($userMessage);
+        // Only perform RAG search if files are explicitly selected
+        $relevantContent = [];
+        if (!empty($selectedFiles)) {
+            $relevantContent = $this->searchRelevantFileContent($userMessage, $selectedFiles);
+        }
         
         $botReply = $this->sendToLLM($userMessage, null, $relevantContent);
         
@@ -290,11 +294,15 @@ EOT;
         set_time_limit(120); // 2 minutes
         
         $prompt = $request->input('message');
+        $selectedFiles = $request->input('selected_files', []); // New: array of selected file names
         $systemPrompt = $this->getSystemPrompt();
         $model = env('LLM_MODEL', 'tinyllama');
         
-        // Implement RAG: Search for relevant file content
-        $relevantContent = $this->searchRelevantFileContent($prompt);
+        // Only perform RAG search if files are explicitly selected
+        $relevantContent = [];
+        if (!empty($selectedFiles)) {
+            $relevantContent = $this->searchRelevantFileContent($prompt, $selectedFiles);
+        }
         
         // If we have relevant content from uploaded files, prioritize it
         if ($relevantContent && !empty($relevantContent)) {
@@ -480,6 +488,40 @@ EOT;
             'available_files' => $files,
             'rag_enabled' => $totalChunks > 0
         ]);
+    }
+
+    /**
+     * Get available files for selection in the chat interface.
+     */
+    public function getAvailableFiles()
+    {
+        try {
+            $files = \Illuminate\Support\Facades\DB::table('rag_chunks')
+                ->select('source', \Illuminate\Support\Facades\DB::raw('COUNT(*) as chunk_count'))
+                ->groupBy('source')
+                ->orderBy('source')
+                ->get()
+                ->map(function ($file) {
+                    return [
+                        'name' => $file->source,
+                        'chunk_count' => $file->chunk_count,
+                        'is_system_document' => $this->isSystemDocument($file->source),
+                        'file_type' => $this->getFileType($file->source),
+                        'file_size' => $this->getFileSize($file->source)
+                    ];
+                });
+            
+            return response()->json([
+                'files' => $files,
+                'total_files' => $files->count()
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'files' => [],
+                'total_files' => 0,
+                'error' => $e->getMessage()
+            ], 500);
+        }
     }
 
     /**
@@ -727,8 +769,9 @@ EOT;
 
     /**
      * Search for relevant content from uploaded files using vector similarity.
+     * If $selectedFiles is provided, only search within those specific files.
      */
-    private function searchRelevantFileContent(string $userMessage): array
+    private function searchRelevantFileContent(string $userMessage, array $selectedFiles = []): array
     {
         try {
             // First check if there are any processed files available
@@ -750,7 +793,7 @@ EOT;
             }
             
             // Search for similar chunks
-            $similarChunks = $vectorSearch->searchSimilar($queryEmbedding, 5); // Get top 5 most relevant chunks
+            $similarChunks = $vectorSearch->searchSimilar($queryEmbedding, 5, $selectedFiles); // Get top 5 most relevant chunks
             
             // Filter out low similarity results (threshold of 0.3)
             $relevantChunks = array_filter($similarChunks, function($chunk) {

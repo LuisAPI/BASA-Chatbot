@@ -22,10 +22,18 @@ class VectorSearchService
 
     /**
      * Find the top N most similar chunks to the query embedding.
+     * If $selectedFiles is provided, only search within those specific files.
      */
-    public function searchSimilar(array $queryEmbedding, int $limit = 3): array
+    public function searchSimilar(array $queryEmbedding, int $limit = 3, array $selectedFiles = []): array
     {
-        $chunks = DB::table('rag_chunks')->get();
+        $query = DB::table('rag_chunks');
+        
+        // If specific files are selected, filter by them
+        if (!empty($selectedFiles)) {
+            $query->whereIn('source', $selectedFiles);
+        }
+        
+        $chunks = $query->get();
         $results = [];
         foreach ($chunks as $row) {
             $embedding = json_decode($row->embedding, true);

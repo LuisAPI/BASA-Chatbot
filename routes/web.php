@@ -28,6 +28,9 @@ Route::post('/chatbot/processing-status', [App\Http\Controllers\ChatbotControlle
 // Endpoint for getting RAG information
 Route::get('/chatbot/rag-info', [App\Http\Controllers\ChatbotController::class, 'getRagInfo']);
 
+// Endpoint for getting available files for selection
+Route::get('/chatbot/available-files', [App\Http\Controllers\ChatbotController::class, 'getAvailableFiles']);
+
 // File gallery routes
 Route::get('/chatbot/files', [App\Http\Controllers\ChatbotController::class, 'fileGallery']);
 Route::post('/chatbot/file-chunks', [App\Http\Controllers\ChatbotController::class, 'getFileChunks']);

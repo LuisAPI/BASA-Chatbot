@@ -33,7 +33,7 @@
                 <button class="btn btn-primary d-flex align-items-center justify-content-center p-2" type="button" id="attachmentDropdown" data-bs-toggle="dropdown" aria-expanded="false" style="height: 38px; width: 38px;">
                     <i class="bi bi-paperclip" style="font-size: 1.3em;"></i>
                 </button>
-                <ul class="dropdown-menu" aria-labelledby="attachmentDropdown" style="min-width: 260px;">
+                <ul class="dropdown-menu" aria-labelledby="attachmentDropdown" style="min-width: 300px;">
                     <li><button class="dropdown-item" type="button" id="test-multiline">Test reply</button></li>
                     <li>
                         <div class="px-3 py-2">
@@ -44,9 +44,21 @@
                     </li>
                     <li>
                         <div class="px-3 py-2">
-                            <label for="file-attach" class="form-label mb-1">Upload File</label>
+                            <label for="file-attach" class="form-label mb-1">Upload New File</label>
                             <input type="file" class="form-control form-control-sm" id="file-attach" accept=".txt,.pdf,.doc,.docx,.rtf,.odt,.csv,.xlsx,.xls">
-                            <button class="btn btn-sm btn-primary mt-2 w-100" type="button" id="attachFileBtn">Attach File</button>
+                            <button class="btn btn-sm btn-primary mt-2 w-100" type="button" id="attachFileBtn">Upload & Process</button>
+                        </div>
+                    </li>
+                    <li><hr class="dropdown-divider"></li>
+                    <li>
+                        <div class="px-3 py-2">
+                            <label class="form-label mb-1">Select Existing Files</label>
+                            <div id="file-selection-container" class="mb-2">
+                                <div class="text-muted small">Loading available files...</div>
+                            </div>
+                            <button class="btn btn-sm btn-outline-primary w-100" type="button" id="refreshFilesBtn">
+                                <i class="bi bi-arrow-clockwise"></i> Refresh Files
+                            </button>
                         </div>
                     </li>
                 </ul>
@@ -74,6 +86,11 @@ const messageInput = document.getElementById('message');
 const autoRetry = document.getElementById('auto-retry');
 const filePillContainer = document.getElementById('file-pill-container');
 const processingFilesDiv = document.getElementById('processing-files');
+
+// File selection variables
+const fileSelectionContainer = document.getElementById('file-selection-container');
+const refreshFilesBtn = document.getElementById('refreshFilesBtn');
+let selectedFiles = new Set(); // Track selected files for RAG context
 
 function addMessage(text, sender, isError = false, retryCallback = null, isLoading = false) {
     const msgDiv = document.createElement('div');
@@ -118,7 +135,10 @@ async function sendMessage(msg) {
                 'Content-Type': 'application/json',
                 'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
             },
-            body: JSON.stringify({ message: msg })
+            body: JSON.stringify({ 
+                message: msg,
+                selected_files: Array.from(selectedFiles) // Include selected files for RAG context
+            })
         });
     } catch (e) {
         resp = null;
@@ -187,7 +207,10 @@ async function streamMessage(msg) {
             'Content-Type': 'application/json',
             'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
         },
-        body: JSON.stringify({ message: msg })
+        body: JSON.stringify({ 
+            message: msg,
+            selected_files: Array.from(selectedFiles) // Include selected files for RAG context
+        })
     });
     chatLog.removeChild(chatLog.lastChild);
     if (!response.ok) {
@@ -546,10 +569,115 @@ window.addEventListener('unhandledrejection', function(event) {
     addMessage('Error: A network or processing error occurred. Please try again.', 'bot', true);
 });
 
+// File selection functions
+function loadAvailableFiles() {
+    fileSelectionContainer.innerHTML = '<div class="text-muted small">Loading available files...</div>';
+    
+    fetch('/chatbot/available-files')
+        .then(response => response.json())
+        .then(data => {
+            if (data.files && data.files.length > 0) {
+                renderFileSelection(data.files);
+            } else {
+                fileSelectionContainer.innerHTML = '<div class="text-muted small">No files available. Upload some files first.</div>';
+            }
+        })
+        .catch(error => {
+            console.error('Error loading files:', error);
+            fileSelectionContainer.innerHTML = '<div class="text-danger small">Error loading files. Please try again.</div>';
+        });
+}
+
+function renderFileSelection(files) {
+    fileSelectionContainer.innerHTML = '';
+    
+    files.forEach(file => {
+        const fileDiv = document.createElement('div');
+        fileDiv.className = 'form-check mb-2';
+        
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.className = 'form-check-input';
+        checkbox.id = 'file-' + file.name.replace(/[^a-zA-Z0-9]/g, '_');
+        checkbox.value = file.name;
+        checkbox.checked = selectedFiles.has(file.name);
+        checkbox.addEventListener('change', function() {
+            if (this.checked) {
+                selectedFiles.add(this.value);
+            } else {
+                selectedFiles.delete(this.value);
+            }
+            updateSelectedFilesDisplay();
+        });
+        
+        const label = document.createElement('label');
+        label.className = 'form-check-label small';
+        label.htmlFor = checkbox.id;
+        
+        const badge = file.is_system_document ? 
+            '<span class="badge bg-primary me-1">System</span>' : 
+            '<span class="badge bg-secondary me-1">User</span>';
+        
+        label.innerHTML = `
+            ${badge}
+            <strong>${file.name}</strong>
+            <br><small class="text-muted">
+                ${file.file_type} • ${file.chunk_count} chunks • ${file.file_size}
+            </small>
+        `;
+        
+        fileDiv.appendChild(checkbox);
+        fileDiv.appendChild(label);
+        fileSelectionContainer.appendChild(fileDiv);
+    });
+    
+    updateSelectedFilesDisplay();
+}
+
+function updateSelectedFilesDisplay() {
+    // Update the file pill container to show selected files
+    filePillContainer.innerHTML = '';
+    
+    if (selectedFiles.size > 0) {
+        selectedFiles.forEach(fileName => {
+            const pill = document.createElement('span');
+            pill.className = 'badge rounded-pill bg-success text-white d-inline-flex align-items-center px-3 py-2 me-2 mb-2';
+            pill.style.fontSize = '0.9em';
+            pill.textContent = fileName;
+            
+            const removeBtn = document.createElement('button');
+            removeBtn.type = 'button';
+            removeBtn.className = 'btn-close btn-close-white ms-2';
+            removeBtn.style.fontSize = '0.8em';
+            removeBtn.setAttribute('aria-label', 'Remove');
+            removeBtn.onclick = function() {
+                selectedFiles.delete(fileName);
+                updateSelectedFilesDisplay();
+                // Update checkbox state
+                const checkbox = document.getElementById('file-' + fileName.replace(/[^a-zA-Z0-9]/g, '_'));
+                if (checkbox) checkbox.checked = false;
+            };
+            
+            pill.appendChild(removeBtn);
+            filePillContainer.appendChild(pill);
+        });
+        
+        filePillContainer.style.display = 'block';
+    } else {
+        filePillContainer.style.display = 'none';
+    }
+}
+
+// Add event listeners for file selection
+refreshFilesBtn && refreshFilesBtn.addEventListener('click', function() {
+    loadAvailableFiles();
+});
+
 // Start polling when page loads
 document.addEventListener('DOMContentLoaded', function() {
     startFileProcessingPolling();
     checkRagStatus(); // Check RAG status on page load
+    loadAvailableFiles(); // Load available files for selection
 });
 </script>
 @endsection
