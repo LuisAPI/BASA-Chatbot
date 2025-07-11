@@ -68,7 +68,8 @@ class ChatbotController extends Controller
             'reply' => $botReply,
             'rag_used' => !empty($relevantContent),
             'rag_chunks_found' => count($relevantContent),
-            'rag_files' => !empty($relevantContent) ? array_unique(array_column($relevantContent, 'source')) : []
+            'rag_files' => !empty($relevantContent) ? array_unique(array_column($relevantContent, 'source')) : [],
+            'debug_enabled' => config('app.debug', false)
         ]);
     }
 

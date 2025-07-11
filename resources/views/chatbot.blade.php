@@ -140,8 +140,8 @@ async function sendMessage(msg) {
             
             let message = data.reply;
             
-            // Add RAG information if used
-            if (data.rag_used) {
+            // Add RAG information if used and debug is enabled
+            if (data.rag_used && data.debug_enabled) {
                 try {
                     let files = Array.isArray(data.rag_files) ? data.rag_files.join(', ') : '';
                     let chunksFound = typeof data.rag_chunks_found === 'number' ? data.rag_chunks_found : 'unknown';
@@ -151,6 +151,9 @@ async function sendMessage(msg) {
                     console.error('Error processing RAG data:', ragError);
                     message += '\n\n[Response enhanced with uploaded documents]';
                 }
+            } else if (data.rag_used) {
+                // RAG was used but debug is disabled - just log to console
+                console.log('RAG used but debug disabled - not showing indicator');
             } else {
                 console.log('RAG not used - no relevant content found');
             }
