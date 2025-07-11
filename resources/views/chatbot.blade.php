@@ -49,6 +49,31 @@
         #fileSelectionContainer::-webkit-scrollbar-thumb:hover {
             background: #adb5bd;
         }
+        
+        /* Action buttons styling */
+        .chat-content.bot .btn-sm {
+            padding: 0.25rem 0.5rem;
+            font-size: 0.75rem;
+            border-radius: 0.25rem;
+        }
+        
+        .chat-content.bot .btn-outline-secondary:hover {
+            background-color: #6c757d;
+            border-color: #6c757d;
+            color: white;
+        }
+        
+        .chat-content.bot .btn-outline-primary:hover {
+            background-color: #0d6efd;
+            border-color: #0d6efd;
+            color: white;
+        }
+        
+        .chat-content.bot .btn-success {
+            background-color: #198754;
+            border-color: #198754;
+            color: white;
+        }
     </style>
 @endsection
 
@@ -221,6 +246,78 @@ function addMessage(text, sender, isError = false, retryCallback = null, isLoadi
             p.textContent = para.trim();
             content.appendChild(p);
         });
+        
+        // Add action buttons for bot responses (not for errors or loading states)
+        if (sender === 'bot' && !isError && !isLoading && text.trim()) {
+            const actionButtons = document.createElement('div');
+            actionButtons.className = 'mt-2 d-flex gap-2';
+            actionButtons.style.fontSize = '0.85em';
+            
+            // Copy to clipboard button
+            const copyBtn = document.createElement('button');
+            copyBtn.className = 'btn btn-outline-secondary btn-sm';
+            copyBtn.innerHTML = '<i class="bi bi-clipboard me-1"></i>Copy';
+            copyBtn.onclick = function() {
+                navigator.clipboard.writeText(text).then(() => {
+                    // Show success feedback
+                    const originalText = copyBtn.innerHTML;
+                    copyBtn.innerHTML = '<i class="bi bi-check me-1"></i>Copied!';
+                    copyBtn.className = 'btn btn-success btn-sm';
+                    setTimeout(() => {
+                        copyBtn.innerHTML = originalText;
+                        copyBtn.className = 'btn btn-outline-secondary btn-sm';
+                    }, 2000);
+                }).catch(err => {
+                    console.error('Failed to copy text: ', err);
+                    // Fallback for older browsers
+                    const textArea = document.createElement('textarea');
+                    textArea.value = text;
+                    document.body.appendChild(textArea);
+                    textArea.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(textArea);
+                    
+                    const originalText = copyBtn.innerHTML;
+                    copyBtn.innerHTML = '<i class="bi bi-check me-1"></i>Copied!';
+                    copyBtn.className = 'btn btn-success btn-sm';
+                    setTimeout(() => {
+                        copyBtn.innerHTML = originalText;
+                        copyBtn.className = 'btn btn-outline-secondary btn-sm';
+                    }, 2000);
+                });
+            };
+            
+            // Regenerate button
+            const regenerateBtn = document.createElement('button');
+            regenerateBtn.className = 'btn btn-outline-primary btn-sm';
+            regenerateBtn.innerHTML = '<i class="bi bi-arrow-clockwise me-1"></i>Regenerate';
+            regenerateBtn.onclick = function() {
+                // Find the user message that preceded this bot response
+                const messages = chatLog.querySelectorAll('.chat-message');
+                let userMessage = null;
+                
+                // Look backwards from current message to find the most recent user message
+                for (let i = messages.length - 1; i >= 0; i--) {
+                    if (messages[i].querySelector('.chat-avatar.user')) {
+                        userMessage = messages[i].querySelector('.chat-content.user').textContent;
+                        break;
+                    }
+                }
+                
+                if (userMessage) {
+                    // Remove the current bot response
+                    chatLog.removeChild(msgDiv);
+                    // Send the same user message again
+                    handleBotReply(userMessage);
+                } else {
+                    console.error('Could not find user message to regenerate');
+                }
+            };
+            
+            actionButtons.appendChild(copyBtn);
+            actionButtons.appendChild(regenerateBtn);
+            content.appendChild(actionButtons);
+        }
     }
     msgDiv.appendChild(avatar);
     msgDiv.appendChild(content);
@@ -363,7 +460,15 @@ async function streamMessage(msg) {
             result += chunk;
             // Update the bot message in the UI
             if (chatLog.lastChild && chatLog.lastChild.classList.contains('chat-message') && chatLog.lastChild.querySelector('.chat-avatar.bot')) {
-                chatLog.lastChild.querySelector('.chat-content.bot').textContent = result;
+                const contentDiv = chatLog.lastChild.querySelector('.chat-content.bot');
+                // Clear existing content and add paragraphs
+                contentDiv.innerHTML = '';
+                result.split(/\n{2,}/).forEach((para, idx, arr) => {
+                    const p = document.createElement('p');
+                    p.style.marginBottom = idx < arr.length - 1 ? '1em' : '0';
+                    p.textContent = para.trim();
+                    contentDiv.appendChild(p);
+                });
             } else {
                 // If for some reason the last message is not the bot, add a new one
                 addMessage(result, 'bot');
@@ -376,7 +481,7 @@ async function streamMessage(msg) {
                 setTimeout(() => streamMessage(msg), 1000);
             }
         } else {
-            // Finalize the message with addMessage to standardize formatting
+            // Finalize the message with addMessage to standardize formatting and add buttons
             chatLog.removeChild(chatLog.lastChild);
             addMessage(result, 'bot');
         }
