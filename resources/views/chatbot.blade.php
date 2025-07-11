@@ -10,6 +10,45 @@
             background: url('/images/BP-DEPDev%20Zoom%20Background.jpg') no-repeat center center fixed;
             background-size: cover;
         }
+        
+        /* File selection modal styles */
+        .file-item {
+            transition: background-color 0.2s ease;
+        }
+        
+        .file-item:hover {
+            background-color: #f8f9fa;
+        }
+        
+        .file-item:last-child {
+            border-bottom: none !important;
+        }
+        
+        .file-name {
+            word-break: break-word;
+        }
+        
+        #fileSelectionContainer {
+            scrollbar-width: thin;
+            scrollbar-color: #dee2e6 #f8f9fa;
+        }
+        
+        #fileSelectionContainer::-webkit-scrollbar {
+            width: 6px;
+        }
+        
+        #fileSelectionContainer::-webkit-scrollbar-track {
+            background: #f8f9fa;
+        }
+        
+        #fileSelectionContainer::-webkit-scrollbar-thumb {
+            background: #dee2e6;
+            border-radius: 3px;
+        }
+        
+        #fileSelectionContainer::-webkit-scrollbar-thumb:hover {
+            background: #adb5bd;
+        }
     </style>
 @endsection
 
@@ -51,15 +90,9 @@
                     </li>
                     <li><hr class="dropdown-divider"></li>
                     <li>
-                        <div class="px-3 py-2">
-                            <label class="form-label mb-1">Select Existing Files</label>
-                            <div id="file-selection-container" class="mb-2">
-                                <div class="text-muted small">Loading available files...</div>
-                            </div>
-                            <button class="btn btn-sm btn-outline-primary w-100" type="button" id="refreshFilesBtn">
-                                <i class="bi bi-arrow-clockwise"></i> Refresh Files
-                            </button>
-                        </div>
+                        <button class="dropdown-item" type="button" id="openFileSelectorBtn">
+                            <i class="bi bi-folder2-open me-2"></i>Select Existing Files
+                        </button>
                     </li>
                 </ul>
             </div>
@@ -76,6 +109,66 @@
     </div>
     <div id="processing-files" class="mb-2"></div>
 </div>
+
+<!-- File Selection Modal -->
+<div class="modal fade" id="fileSelectionModal" tabindex="-1" aria-labelledby="fileSelectionModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="fileSelectionModalLabel">
+                    <i class="bi bi-folder2-open me-2"></i>Select Files for Context
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <!-- Search and Filter Bar -->
+                <div class="row mb-3">
+                    <div class="col-md-8">
+                        <div class="input-group">
+                            <span class="input-group-text"><i class="bi bi-search"></i></span>
+                            <input type="text" class="form-control" id="fileSearchInput" placeholder="Search files...">
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <select class="form-select" id="fileTypeFilter">
+                            <option value="">All Types</option>
+                            <option value="system">System Documents</option>
+                            <option value="user">User Uploads</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <!-- File Count and Selection Info -->
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <div>
+                        <span class="badge bg-primary" id="totalFilesCount">0 files</span>
+                        <span class="badge bg-success ms-2" id="selectedFilesCount">0 selected</span>
+                    </div>
+                    <div>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" id="selectAllBtn">Select All</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary ms-1" id="clearAllBtn">Clear All</button>
+                    </div>
+                </div>
+                
+                <!-- Files List -->
+                <div id="fileSelectionContainer" class="border rounded" style="max-height: 400px; overflow-y: auto;">
+                    <div class="text-center py-4">
+                        <div class="spinner-border text-primary" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                        <p class="mt-2 text-muted">Loading available files...</p>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="applyFileSelectionBtn">
+                    <i class="bi bi-check-circle me-1"></i>Apply Selection
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
 @endsection
 
 @section('scripts')
@@ -87,10 +180,20 @@ const autoRetry = document.getElementById('auto-retry');
 const filePillContainer = document.getElementById('file-pill-container');
 const processingFilesDiv = document.getElementById('processing-files');
 
-// File selection variables
-const fileSelectionContainer = document.getElementById('file-selection-container');
-const refreshFilesBtn = document.getElementById('refreshFilesBtn');
+// File selection modal variables
+const fileSelectionModal = document.getElementById('fileSelectionModal');
+const openFileSelectorBtn = document.getElementById('openFileSelectorBtn');
+const fileSelectionContainer = document.getElementById('fileSelectionContainer');
+const fileSearchInput = document.getElementById('fileSearchInput');
+const fileTypeFilter = document.getElementById('fileTypeFilter');
+const totalFilesCount = document.getElementById('totalFilesCount');
+const selectedFilesCount = document.getElementById('selectedFilesCount');
+const selectAllBtn = document.getElementById('selectAllBtn');
+const clearAllBtn = document.getElementById('clearAllBtn');
+const applyFileSelectionBtn = document.getElementById('applyFileSelectionBtn');
+
 let selectedFiles = new Set(); // Track selected files for RAG context
+let allAvailableFiles = []; // Store all available files for filtering
 
 function addMessage(text, sender, isError = false, retryCallback = null, isLoading = false) {
     const msgDiv = document.createElement('div');
@@ -569,65 +672,109 @@ window.addEventListener('unhandledrejection', function(event) {
     addMessage('Error: A network or processing error occurred. Please try again.', 'bot', true);
 });
 
-// File selection functions
+// File selection modal functions
+function openFileSelector() {
+    loadAvailableFiles();
+    const modal = new bootstrap.Modal(fileSelectionModal);
+    modal.show();
+}
+
 function loadAvailableFiles() {
-    fileSelectionContainer.innerHTML = '<div class="text-muted small">Loading available files...</div>';
+    fileSelectionContainer.innerHTML = `
+        <div class="text-center py-4">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <p class="mt-2 text-muted">Loading available files...</p>
+        </div>
+    `;
     
     fetch('/chatbot/available-files')
         .then(response => response.json())
         .then(data => {
-            if (data.files && data.files.length > 0) {
-                renderFileSelection(data.files);
-            } else {
-                fileSelectionContainer.innerHTML = '<div class="text-muted small">No files available. Upload some files first.</div>';
-            }
+            allAvailableFiles = data.files || [];
+            renderFileSelection(allAvailableFiles);
+            updateFileCounts();
         })
         .catch(error => {
             console.error('Error loading files:', error);
-            fileSelectionContainer.innerHTML = '<div class="text-danger small">Error loading files. Please try again.</div>';
+            fileSelectionContainer.innerHTML = `
+                <div class="text-center py-4">
+                    <i class="bi bi-exclamation-triangle text-danger" style="font-size: 2rem;"></i>
+                    <p class="mt-2 text-danger">Error loading files. Please try again.</p>
+                </div>
+            `;
         });
 }
 
 function renderFileSelection(files) {
     fileSelectionContainer.innerHTML = '';
     
+    if (files.length === 0) {
+        fileSelectionContainer.innerHTML = `
+            <div class="text-center py-4">
+                <i class="bi bi-folder-x text-muted" style="font-size: 2rem;"></i>
+                <p class="mt-2 text-muted">No files available. Upload some files first.</p>
+            </div>
+        `;
+        return;
+    }
+    
     files.forEach(file => {
         const fileDiv = document.createElement('div');
-        fileDiv.className = 'form-check mb-2';
+        fileDiv.className = 'file-item p-3 border-bottom';
+        fileDiv.style.cursor = 'pointer';
+        fileDiv.onclick = function(e) {
+            if (e.target.type !== 'checkbox') {
+                const checkbox = this.querySelector('input[type="checkbox"]');
+                checkbox.checked = !checkbox.checked;
+                checkbox.dispatchEvent(new Event('change'));
+            }
+        };
         
         const checkbox = document.createElement('input');
         checkbox.type = 'checkbox';
-        checkbox.className = 'form-check-input';
+        checkbox.className = 'form-check-input me-3';
         checkbox.id = 'file-' + file.name.replace(/[^a-zA-Z0-9]/g, '_');
         checkbox.value = file.name;
         checkbox.checked = selectedFiles.has(file.name);
-        checkbox.addEventListener('change', function() {
+        checkbox.addEventListener('change', function(e) {
+            e.stopPropagation();
             if (this.checked) {
                 selectedFiles.add(this.value);
             } else {
                 selectedFiles.delete(this.value);
             }
             updateSelectedFilesDisplay();
+            updateFileCounts();
         });
         
-        const label = document.createElement('label');
-        label.className = 'form-check-label small';
-        label.htmlFor = checkbox.id;
-        
         const badge = file.is_system_document ? 
-            '<span class="badge bg-primary me-1">System</span>' : 
-            '<span class="badge bg-secondary me-1">User</span>';
+            '<span class="badge bg-primary me-2">System</span>' : 
+            '<span class="badge bg-secondary me-2">User</span>';
         
-        label.innerHTML = `
-            ${badge}
-            <strong>${file.name}</strong>
-            <br><small class="text-muted">
-                ${file.file_type} • ${file.chunk_count} chunks • ${file.file_size}
-            </small>
+        const fileIcon = file.is_system_document ? 'bi-shield-check' : 'bi-file-earmark-text';
+        
+        fileDiv.innerHTML = `
+            ${checkbox.outerHTML}
+            <div class="d-flex align-items-center">
+                <i class="bi ${fileIcon} me-2 ${file.is_system_document ? 'text-primary' : 'text-secondary'}"></i>
+                <div class="flex-grow-1">
+                    <div class="d-flex align-items-center mb-1">
+                        ${badge}
+                        <strong class="file-name">${file.name}</strong>
+                    </div>
+                    <div class="text-muted small">
+                        <i class="bi bi-file-earmark me-1"></i>${file.file_type}
+                        <span class="mx-2">•</span>
+                        <i class="bi bi-collection me-1"></i>${file.chunk_count} chunks
+                        <span class="mx-2">•</span>
+                        <i class="bi bi-hdd me-1"></i>${file.file_size}
+                    </div>
+                </div>
+            </div>
         `;
         
-        fileDiv.appendChild(checkbox);
-        fileDiv.appendChild(label);
         fileSelectionContainer.appendChild(fileDiv);
     });
     
@@ -653,7 +800,8 @@ function updateSelectedFilesDisplay() {
             removeBtn.onclick = function() {
                 selectedFiles.delete(fileName);
                 updateSelectedFilesDisplay();
-                // Update checkbox state
+                updateFileCounts();
+                // Update checkbox state in modal
                 const checkbox = document.getElementById('file-' + fileName.replace(/[^a-zA-Z0-9]/g, '_'));
                 if (checkbox) checkbox.checked = false;
             };
@@ -668,16 +816,78 @@ function updateSelectedFilesDisplay() {
     }
 }
 
-// Add event listeners for file selection
-refreshFilesBtn && refreshFilesBtn.addEventListener('click', function() {
-    loadAvailableFiles();
+function updateFileCounts() {
+    totalFilesCount.textContent = `${allAvailableFiles.length} files`;
+    selectedFilesCount.textContent = `${selectedFiles.size} selected`;
+}
+
+function filterFiles() {
+    const searchTerm = fileSearchInput.value.toLowerCase();
+    const typeFilter = fileTypeFilter.value;
+    
+    const filteredFiles = allAvailableFiles.filter(file => {
+        const matchesSearch = file.name.toLowerCase().includes(searchTerm);
+        const matchesType = !typeFilter || 
+            (typeFilter === 'system' && file.is_system_document) ||
+            (typeFilter === 'user' && !file.is_system_document);
+        
+        return matchesSearch && matchesType;
+    });
+    
+    renderFileSelection(filteredFiles);
+}
+
+function selectAllFiles() {
+    const visibleCheckboxes = fileSelectionContainer.querySelectorAll('input[type="checkbox"]');
+    visibleCheckboxes.forEach(checkbox => {
+        checkbox.checked = true;
+        selectedFiles.add(checkbox.value);
+    });
+    updateSelectedFilesDisplay();
+    updateFileCounts();
+}
+
+function clearAllFiles() {
+    const visibleCheckboxes = fileSelectionContainer.querySelectorAll('input[type="checkbox"]');
+    visibleCheckboxes.forEach(checkbox => {
+        checkbox.checked = false;
+        selectedFiles.delete(checkbox.value);
+    });
+    updateSelectedFilesDisplay();
+    updateFileCounts();
+}
+
+// Add event listeners for file selection modal
+openFileSelectorBtn && openFileSelectorBtn.addEventListener('click', function() {
+    openFileSelector();
+});
+
+fileSearchInput && fileSearchInput.addEventListener('input', function() {
+    filterFiles();
+});
+
+fileTypeFilter && fileTypeFilter.addEventListener('change', function() {
+    filterFiles();
+});
+
+selectAllBtn && selectAllBtn.addEventListener('click', function() {
+    selectAllFiles();
+});
+
+clearAllBtn && clearAllBtn.addEventListener('click', function() {
+    clearAllFiles();
+});
+
+applyFileSelectionBtn && applyFileSelectionBtn.addEventListener('click', function() {
+    const modal = bootstrap.Modal.getInstance(fileSelectionModal);
+    modal.hide();
+    updateSelectedFilesDisplay();
 });
 
 // Start polling when page loads
 document.addEventListener('DOMContentLoaded', function() {
     startFileProcessingPolling();
     checkRagStatus(); // Check RAG status on page load
-    loadAvailableFiles(); // Load available files for selection
 });
 </script>
 @endsection
