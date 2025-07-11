@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Services\Chunker;
 use App\Services\EmbeddingService;
 use App\Services\VectorSearchService;
+use App\Services\OllamaConnectionService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -12,6 +13,13 @@ use App\Jobs\ProcessFileForRAG;
 
 class ChatbotController extends Controller
 {
+    protected $ollamaService;
+
+    public function __construct()
+    {
+        $this->ollamaService = new OllamaConnectionService();
+    }
+
     public function index()
     {
         return view('chatbot');
@@ -180,7 +188,13 @@ EOT;
         if (!$stream) {
             // Non-streaming mode
             try {
-                $response = \Illuminate\Support\Facades\Http::timeout(90)->post('http://127.0.0.1:11434/api/generate', [
+                $endpoint = $this->ollamaService->getActiveEndpoint();
+                if (!$endpoint) {
+                    return 'Error: Could not connect to any Ollama instance. Please check if Ollama is running.';
+                }
+
+                $request = $this->ollamaService->createAuthenticatedRequest();
+                $response = $request->timeout(90)->post($endpoint . '/api/generate', [
                     'model' => $model,
                     'system' => $systemPrompt,
                     'prompt' => $prompt,
@@ -201,13 +215,26 @@ EOT;
         } else {
             // Streaming mode: collect tokens as they arrive
             try {
+                $endpoint = $this->ollamaService->getActiveEndpoint();
+                if (!$endpoint) {
+                    return 'Error: Could not connect to any Ollama instance. Please check if Ollama is running.';
+                }
+
                 $botReply = '';
                 $client = new \GuzzleHttp\Client([
                     'timeout' => 90, // 90 seconds timeout
                     'connect_timeout' => 10, // 10 seconds connection timeout
                     'read_timeout' => 90 // 90 seconds read timeout
                 ]);
-                $res = $client->post('http://127.0.0.1:11434/api/generate', [
+                
+                // Add authentication headers if required
+                $headers = ['Content-Type' => 'application/json'];
+                if (config('ollama.require_auth') && config('ollama.api_key')) {
+                    $headers['Authorization'] = 'Bearer ' . config('ollama.api_key');
+                }
+                
+                $res = $client->post($endpoint . '/api/generate', [
+                    'headers' => $headers,
                     'json' => [
                         'model' => $model,
                         'system' => $systemPrompt,
@@ -288,7 +315,12 @@ EOT;
         }
         
         try {
-            return response()->stream(function () use ($prompt, $systemPrompt, $model) {
+            $endpoint = $this->ollamaService->getActiveEndpoint();
+            if (!$endpoint) {
+                return response()->json(['error' => 'Could not connect to any Ollama instance. Please check if Ollama is running.'], 500);
+            }
+
+            return response()->stream(function () use ($prompt, $systemPrompt, $model, $endpoint) {
                 // Set execution time limit for the stream function
                 set_time_limit(120);
                 
@@ -298,7 +330,14 @@ EOT;
                     'read_timeout' => 90 // 90 seconds read timeout
                 ]);
                 
-                $res = $client->post('http://127.0.0.1:11434/api/generate', [
+                // Add authentication headers if required
+                $headers = ['Content-Type' => 'application/json'];
+                if (config('ollama.require_auth') && config('ollama.api_key')) {
+                    $headers['Authorization'] = 'Bearer ' . config('ollama.api_key');
+                }
+                
+                $res = $client->post($endpoint . '/api/generate', [
+                    'headers' => $headers,
                     'json' => [
                         'model' => $model,
                         'system' => $systemPrompt,
