@@ -725,11 +725,17 @@ function renderFileSelection(files) {
         fileDiv.className = 'file-item p-3 border-bottom';
         fileDiv.style.cursor = 'pointer';
         fileDiv.onclick = function(e) {
-            if (e.target.type !== 'checkbox') {
-                const checkbox = this.querySelector('input[type="checkbox"]');
-                checkbox.checked = !checkbox.checked;
-                checkbox.dispatchEvent(new Event('change'));
+            // Don't trigger if clicking on the checkbox itself
+            if (e.target.type === 'checkbox') {
+                return;
             }
+            // Don't trigger if clicking on the close button or other interactive elements
+            if (e.target.tagName === 'BUTTON' || e.target.closest('button')) {
+                return;
+            }
+            const checkbox = this.querySelector('input[type="checkbox"]');
+            checkbox.checked = !checkbox.checked;
+            checkbox.dispatchEvent(new Event('change'));
         };
         
         const checkbox = document.createElement('input');
@@ -740,11 +746,16 @@ function renderFileSelection(files) {
         checkbox.checked = selectedFiles.has(file.name);
         checkbox.addEventListener('change', function(e) {
             e.stopPropagation();
+            const fileName = this.value;
+            
             if (this.checked) {
-                selectedFiles.add(this.value);
+                selectedFiles.add(fileName);
+                console.log('Added file:', fileName, 'Total selected:', selectedFiles.size);
             } else {
-                selectedFiles.delete(this.value);
+                selectedFiles.delete(fileName);
+                console.log('Removed file:', fileName, 'Total selected:', selectedFiles.size);
             }
+            
             updateSelectedFilesDisplay();
             updateFileCounts();
         });
@@ -755,26 +766,30 @@ function renderFileSelection(files) {
         
         const fileIcon = file.is_system_document ? 'bi-shield-check' : 'bi-file-earmark-text';
         
-        fileDiv.innerHTML = `
-            ${checkbox.outerHTML}
-            <div class="d-flex align-items-center">
-                <i class="bi ${fileIcon} me-2 ${file.is_system_document ? 'text-primary' : 'text-secondary'}"></i>
-                <div class="flex-grow-1">
-                    <div class="d-flex align-items-center mb-1">
-                        ${badge}
-                        <strong class="file-name">${file.name}</strong>
-                    </div>
-                    <div class="text-muted small">
-                        <i class="bi bi-file-earmark me-1"></i>${file.file_type}
-                        <span class="mx-2">•</span>
-                        <i class="bi bi-collection me-1"></i>${file.chunk_count} chunks
-                        <span class="mx-2">•</span>
-                        <i class="bi bi-hdd me-1"></i>${file.file_size}
-                    </div>
+        // Append the checkbox first
+        fileDiv.appendChild(checkbox);
+        
+        // Create the content div
+        const contentDiv = document.createElement('div');
+        contentDiv.className = 'd-flex align-items-center';
+        contentDiv.innerHTML = `
+            <i class="bi ${fileIcon} me-2 ${file.is_system_document ? 'text-primary' : 'text-secondary'}"></i>
+            <div class="flex-grow-1">
+                <div class="d-flex align-items-center mb-1">
+                    ${badge}
+                    <strong class="file-name">${file.name}</strong>
+                </div>
+                <div class="text-muted small">
+                    <i class="bi bi-file-earmark me-1"></i>${file.file_type}
+                    <span class="mx-2">•</span>
+                    <i class="bi bi-collection me-1"></i>${file.chunk_count} chunks
+                    <span class="mx-2">•</span>
+                    <i class="bi bi-hdd me-1"></i>${file.file_size}
                 </div>
             </div>
         `;
         
+        fileDiv.appendChild(contentDiv);
         fileSelectionContainer.appendChild(fileDiv);
     });
     
@@ -783,6 +798,8 @@ function renderFileSelection(files) {
 
 function updateSelectedFilesDisplay() {
     // Update the file pill container to show selected files
+    if (!filePillContainer) return;
+    
     filePillContainer.innerHTML = '';
     
     if (selectedFiles.size > 0) {
@@ -811,14 +828,21 @@ function updateSelectedFilesDisplay() {
         });
         
         filePillContainer.style.display = 'block';
+        console.log('Updated file pills - showing', selectedFiles.size, 'files');
     } else {
         filePillContainer.style.display = 'none';
+        console.log('Updated file pills - none selected');
     }
 }
 
 function updateFileCounts() {
-    totalFilesCount.textContent = `${allAvailableFiles.length} files`;
-    selectedFilesCount.textContent = `${selectedFiles.size} selected`;
+    if (totalFilesCount) {
+        totalFilesCount.textContent = `${allAvailableFiles.length} files`;
+    }
+    if (selectedFilesCount) {
+        selectedFilesCount.textContent = `${selectedFiles.size} selected`;
+    }
+    console.log('Updated file counts - Total:', allAvailableFiles.length, 'Selected:', selectedFiles.size);
 }
 
 function filterFiles() {
@@ -845,6 +869,7 @@ function selectAllFiles() {
     });
     updateSelectedFilesDisplay();
     updateFileCounts();
+    console.log('Select All - Total selected:', selectedFiles.size);
 }
 
 function clearAllFiles() {
@@ -855,6 +880,7 @@ function clearAllFiles() {
     });
     updateSelectedFilesDisplay();
     updateFileCounts();
+    console.log('Clear All - Total selected:', selectedFiles.size);
 }
 
 // Add event listeners for file selection modal
