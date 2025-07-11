@@ -4,17 +4,17 @@ namespace App\Services;
 
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Config;
+use Illuminate\Support\Facades\Log;
 
 class EmbeddingService
 {
-    protected $endpoint;
+    protected $ollamaService;
     protected $model;
 
-    public function __construct($endpoint = 'http://127.0.0.1:11434/api/embeddings', $model = null)
+    public function __construct()
     {
-        $this->endpoint = $endpoint;
-        // Read embedding model from .env or use default
-        $this->model = $model ?? env('LLM_EMBED_MODEL', 'nomic-embed-text');
+        $this->ollamaService = new OllamaConnectionService();
+        $this->model = config('ollama.default_models.embedding', 'nomic-embed-text');
     }
 
     /**
@@ -22,13 +22,41 @@ class EmbeddingService
      */
     public function getEmbedding(string $text): ?array
     {
-        $response = Http::timeout(30)->post($this->endpoint, [
-            'model' => $this->model,
-            'prompt' => $text
-        ]);
-        if ($response->ok() && isset($response['embedding'])) {
-            return $response['embedding'];
+        $endpoint = $this->ollamaService->getActiveEndpoint();
+        
+        if (!$endpoint) {
+            Log::error('No Ollama endpoint available for embedding generation');
+            return null;
         }
-        return null;
+
+        $embeddingEndpoint = $endpoint . '/api/embeddings';
+        
+        try {
+            $request = $this->ollamaService->createAuthenticatedRequest();
+            $response = $request->timeout(config('ollama.timeout', 30))
+                ->post($embeddingEndpoint, [
+                    'model' => $this->model,
+                    'prompt' => $text
+                ]);
+
+            if ($response->ok() && isset($response['embedding'])) {
+                return $response['embedding'];
+            }
+            
+            Log::warning('Embedding generation failed', [
+                'endpoint' => $embeddingEndpoint,
+                'model' => $this->model,
+                'response' => $response->body()
+            ]);
+            
+            return null;
+        } catch (\Exception $e) {
+            Log::error('Embedding generation exception', [
+                'endpoint' => $embeddingEndpoint,
+                'model' => $this->model,
+                'error' => $e->getMessage()
+            ]);
+            return null;
+        }
     }
 }

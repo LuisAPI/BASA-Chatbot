@@ -136,6 +136,38 @@ ollama pull nomic-embed-text
 > `tinyllama` or similar is used for generating responses.
 > `nomic-embed-text` is used for vector embedding in RAG.
 
+### Ollama Connection Management
+
+BASA includes a comprehensive Ollama connection management system:
+
+#### Check Connection Status
+```sh
+# Basic status check
+php artisan ollama:status
+
+# Detailed connection information
+php artisan ollama:status --detailed
+```
+
+#### Configuration Options
+The system supports multiple Ollama endpoints and auto-discovery:
+
+**Environment Variables:**
+```env
+OLLAMA_ENDPOINT=http://localhost:11434
+OLLAMA_CORPORATE_ENDPOINT=https://ollama.depdev.gov.ph
+OLLAMA_AUTO_DISCOVER=true
+OLLAMA_TIMEOUT=30
+OLLAMA_RETRY_ATTEMPTS=3
+```
+
+**Features:**
+- **Auto-discovery**: Automatically finds Ollama instances on the network
+- **Fallback endpoints**: Multiple endpoint support with automatic failover
+- **User preferences**: Save and remember preferred endpoints
+- **Connection testing**: Built-in endpoint validation
+- **Graceful degradation**: Handles connection failures gracefully
+
 Then access: [http://localhost:8080/chatbot](http://localhost:8080/chatbot)
 
 ## Default Government Documents
