@@ -222,7 +222,18 @@ const applyFileSelectionBtn = document.getElementById('applyFileSelectionBtn');
 let selectedFiles = new Set(); // Track selected files for RAG context
 let allAvailableFiles = []; // Store all available files for filtering
 
-function addMessage(text, sender, isError = false, retryCallback = null, isLoading = false) {
+function addMessage(text, sender, isError = false, retryCallback = null, isLoading = false, type = null) {
+    // Detect error type for bot
+    const isBotError = (type === 'error') || (isError) || (sender === 'bot' && typeof text === 'string' && text.match(/^I\'m sorry, but I cannot access the webpage|Sorry, I could not fetch|not allowed to access this page|content is not accessible/i));
+    if (isBotError) {
+        // Render only a Bootstrap alert, no chat bubble or avatar
+        const alertDiv = document.createElement('div');
+        alertDiv.className = 'alert alert-danger my-2';
+        alertDiv.textContent = text;
+        chatLog.appendChild(alertDiv);
+        chatLog.scrollTop = chatLog.scrollHeight;
+        return;
+    }
     const msgDiv = document.createElement('div');
     msgDiv.className = 'chat-message';
     const avatar = document.createElement('div');
@@ -361,6 +372,7 @@ async function sendMessage(msg) {
             }
             
             let message = data.reply;
+            let type = data.type || null;
             
             // Add RAG information if used and debug is enabled
             if (data.rag_used && data.debug_enabled) {
@@ -380,7 +392,7 @@ async function sendMessage(msg) {
                 console.log('RAG not used - no relevant content found');
             }
             
-            addMessage(message, 'bot');
+            addMessage(message, 'bot', false, null, false, type);
         } catch (parseError) {
             console.error('Error parsing response:', parseError);
             addMessage('Error: Received invalid response from server. Please try again.', 'bot', true, () => {
@@ -415,33 +427,26 @@ async function streamMessage(msg) {
         })
     });
     chatLog.removeChild(chatLog.lastChild);
-    if (!response.ok) {
-        // Check if it's a JSON response (fallback from streaming)
-        const contentType = response.headers.get('content-type');
-        if (contentType && contentType.includes('application/json')) {
-            try {
-                return response.json().then(data => {
-                    if (data && data.reply) {
-                        addMessage(data.reply, 'bot');
-                    } else {
-                        addMessage('Error: Invalid response format from server.', 'bot', true, retryCallback);
-                    }
-                }).catch(error => {
-                    console.error('Error parsing JSON fallback:', error);
-                    addMessage('Error: Could not parse server response.', 'bot', true, retryCallback);
-                });
-            } catch (error) {
-                console.error('Error handling JSON fallback:', error);
-                addMessage('Error: Could not get response.', 'bot', true, retryCallback);
+
+    // Handle JSON error response before streaming
+    const contentType = response.headers.get('content-type');
+    if (!response.ok || (contentType && contentType.includes('application/json'))) {
+        try {
+            const data = await response.json();
+            if (data && data.type === 'error') {
+                addMessage(data.reply, 'bot', false, null, false, 'error');
+                return;
             }
+            if (data && data.reply) {
+                addMessage(data.reply, 'bot');
+                return;
+            }
+        } catch (e) {
+            addMessage('Error: Could not get response.', 'bot', true, retryCallback);
+            return;
         }
-        addMessage('Error: Could not get response.', 'bot', true, retryCallback);
-        if (autoRetry.checked) {
-            setTimeout(() => streamMessage(msg), 1000);
-        }
-        return;
     }
-    
+
     if (!response.body) {
         addMessage('Error: Could not get response.', 'bot', true, retryCallback);
         if (autoRetry.checked) {
