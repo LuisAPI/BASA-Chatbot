@@ -83,10 +83,19 @@
                                             </div>
                                         @endif
                                         <div class="d-flex justify-content-between align-items-center">
-                                            <button class="btn btn-sm btn-outline-primary view-chunks" 
-                                                    data-file="{{ $file->source }}">
-                                                <i class="bi bi-eye me-1"></i>View Chunks
-                                            </button>
+                                            <div class="d-flex gap-1">
+                                                <button class="btn btn-sm btn-outline-primary view-chunks" 
+                                                        data-file="{{ $file->source }}">
+                                                    <i class="bi bi-eye me-1"></i>View
+                                                </button>
+                                                @if(!$file->is_system_document)
+                                                    <button class="btn btn-sm btn-outline-secondary manage-file" 
+                                                            data-file="{{ $file->source }}" 
+                                                            data-file-id="{{ $file->id ?? '' }}">
+                                                        <i class="bi bi-gear me-1"></i>Manage
+                                                    </button>
+                                                @endif
+                                            </div>
                                             <small class="text-muted">{{ Str::limit($file->source, 25) }}</small>
                                         </div>
                                     </div>
@@ -151,10 +160,19 @@
                                             @endif
                                         </td>
                                         <td>
-                                            <button class="btn btn-sm btn-outline-primary view-chunks" 
-                                                    data-file="{{ $file->source }}">
-                                                <i class="bi bi-eye me-1"></i>View
-                                            </button>
+                                            <div class="d-flex gap-1">
+                                                <button class="btn btn-sm btn-outline-primary view-chunks" 
+                                                        data-file="{{ $file->source }}">
+                                                    <i class="bi bi-eye me-1"></i>View
+                                                </button>
+                                                @if(!$file->is_system_document)
+                                                    <button class="btn btn-sm btn-outline-secondary manage-file" 
+                                                            data-file="{{ $file->source }}" 
+                                                            data-file-id="{{ $file->id ?? '' }}">
+                                                        <i class="bi bi-gear me-1"></i>Manage
+                                                    </button>
+                                                @endif
+                                            </div>
                                         </td>
                                     </tr>
                                 @endforeach
@@ -190,6 +208,29 @@
                 </div>
                 <div id="chunksContainer" class="border rounded p-3" style="max-height: 500px; overflow-y: auto;">
                     <!-- Chunks will be loaded here -->
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal for file management -->
+<div class="modal fade" id="fileManagementModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="bi bi-gear me-2"></i>
+                    <span id="managementFileName"></span>
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="fileManagementContent">
+                    <!-- File management content will be loaded here -->
                 </div>
             </div>
             <div class="modal-footer">
@@ -245,6 +286,15 @@ document.addEventListener('DOMContentLoaded', function() {
         button.addEventListener('click', function() {
             const fileName = this.getAttribute('data-file');
             loadFileChunks(fileName);
+        });
+    });
+
+    // Handle manage file button clicks
+    document.querySelectorAll('.manage-file').forEach(button => {
+        button.addEventListener('click', function() {
+            const fileName = this.getAttribute('data-file');
+            const fileId = this.getAttribute('data-file-id');
+            loadFileManagement(fileName, fileId);
         });
     });
 
@@ -319,6 +369,58 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+function loadFileManagement(fileName, fileId) {
+    // Show loading state
+    document.getElementById('managementFileName').textContent = fileName;
+    document.getElementById('fileManagementContent').innerHTML = '<div class="text-center"><div class="spinner-border" role="status"></div></div>';
+    
+    // Show modal
+    const modal = new bootstrap.Modal(document.getElementById('fileManagementModal'));
+    modal.show();
+
+    // For now, show a simple management interface
+    // In a full implementation, you would fetch file details from the server
+    const content = `
+        <div class="alert alert-info">
+            <i class="bi bi-info-circle me-2"></i>
+            File management features are being integrated into the Gallery.
+        </div>
+        <div class="row">
+            <div class="col-md-6">
+                <h6>File Information</h6>
+                <ul class="list-unstyled">
+                    <li><strong>Name:</strong> ${escapeHtml(fileName)}</li>
+                    <li><strong>ID:</strong> ${fileId || 'N/A'}</li>
+                </ul>
+            </div>
+            <div class="col-md-6">
+                <h6>Actions</h6>
+                <div class="d-grid gap-2">
+                    <button class="btn btn-outline-primary btn-sm" onclick="shareFile('${fileId}')">
+                        <i class="bi bi-share me-1"></i>Share
+                    </button>
+                    <button class="btn btn-outline-danger btn-sm" onclick="deleteFile('${fileId}')">
+                        <i class="bi bi-trash me-1"></i>Delete
+                    </button>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    document.getElementById('fileManagementContent').innerHTML = content;
+}
+
+function shareFile(fileId) {
+    alert('Share functionality will be implemented here for file ID: ' + fileId);
+}
+
+function deleteFile(fileId) {
+    if (confirm('Are you sure you want to delete this file? This action cannot be undone.')) {
+        // Implementation for file deletion
+        alert('Delete functionality will be implemented here for file ID: ' + fileId);
+    }
 }
 </script>
 

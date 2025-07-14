@@ -9,9 +9,10 @@ class VectorSearchService
     /**
      * Store a chunk and its embedding in the database.
      */
-    public function storeChunk(string $source, string $chunk, array $embedding)
+    public function storeChunk(string $source, string $chunk, array $embedding, ?int $userId = null)
     {
         DB::table('rag_chunks')->insert([
+            'user_id' => $userId,
             'source' => $source,
             'chunk' => $chunk,
             'embedding' => json_encode($embedding),
@@ -23,14 +24,32 @@ class VectorSearchService
     /**
      * Find the top N most similar chunks to the query embedding.
      * If $selectedFiles is provided, only search within those specific files.
+     * If $userId is provided, only search within files accessible to that user.
      */
-    public function searchSimilar(array $queryEmbedding, int $limit = 3, array $selectedFiles = []): array
+    public function searchSimilar(array $queryEmbedding, int $limit = 3, array $selectedFiles = [], ?int $userId = null): array
     {
         $query = DB::table('rag_chunks');
         
         // If specific files are selected, filter by them
         if (!empty($selectedFiles)) {
             $query->whereIn('source', $selectedFiles);
+        }
+        
+        // If user ID is provided, filter by user access
+        if ($userId !== null) {
+            $query->where(function($q) use ($userId) {
+                $q->where('user_id', $userId) // User's own files
+                  ->orWhereExists(function($subQuery) use ($userId) {
+                      $subQuery->select(DB::raw(1))
+                               ->from('user_files')
+                               ->whereColumn('user_files.original_name', 'rag_chunks.source')
+                               ->whereColumn('user_files.user_id', 'rag_chunks.user_id')
+                               ->where(function($uf) use ($userId) {
+                                   $uf->whereJsonContains('user_files.shared_with_users', $userId)
+                                      ->orWhere('user_files.is_public', true);
+                               });
+                  });
+            });
         }
         
         $chunks = $query->get();

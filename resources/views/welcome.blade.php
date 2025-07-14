@@ -14,7 +14,11 @@
                 <div class="card-body">
                     <h5 class="card-title">What is BASA?</h5>
                     <p class="card-text">BASA is an internal chatbot for DEPDev, designed to provide fast, reliable, and contextually relevant answers about the agency's functions, services, and structure. Use the sidebar to access the chatbot or return to this home page at any time.</p>
-                    <a href="/chatbot" class="btn btn-primary">Go to Chatbot</a>
+                    @auth
+                        <a href="{{ route('chatbot') }}" class="btn btn-primary">Go to Chatbot</a>
+                    @else
+                        <a href="{{ route('login') }}" class="btn btn-primary">Login to Access Chatbot</a>
+                    @endauth
                 </div>
             </div>
         </div>

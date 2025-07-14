@@ -9,7 +9,11 @@ use App\Services\OllamaConnectionService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 use App\Jobs\ProcessFileForRAG;
+use App\Models\UserFile;
+use App\Models\RagChunk;
+use Illuminate\Support\Facades\Auth;
 
 class ChatbotController extends Controller
 {
@@ -80,18 +84,47 @@ class ChatbotController extends Controller
     public function upload(Request $request)
     {
         Log::info('TEST LOG: upload() called');
+        
+        // Check if user is authenticated
+        if (!Auth::check()) {
+            return response()->json(['reply' => 'Authentication required to upload files.'], 401);
+        }
+        
         if (!$request->hasFile('file')) {
             return response()->json(['reply' => 'No file uploaded.'], 400);
         }
+        
         $file = $request->file('file');
         $fileName = $file->getClientOriginalName();
-        $storagePath = $file->storeAs('uploads', uniqid() . '_' . $fileName, 'local');
+        $fileSize = $file->getSize();
+        $fileType = $file->getMimeType();
+        
+        // Create user-specific storage path
+        $userId = Auth::id();
+        $storagePath = $file->storeAs("uploads/user_{$userId}", uniqid() . '_' . $fileName, 'local');
+        
         if (!$storagePath) {
             return response()->json(['reply' => 'Failed to save uploaded file.'], 500);
         }
+        
+        // Create UserFile record
+        $userFile = UserFile::create([
+            'user_id' => $userId,
+            'original_name' => $fileName,
+            'storage_path' => $storagePath,
+            'file_size' => $fileSize,
+            'file_type' => $fileType,
+            'processing_status' => 'pending'
+        ]);
+        
         // Dispatch background job for parsing, chunking, embedding
-        ProcessFileForRAG::dispatch($storagePath, $fileName);
-        return response()->json(['reply' => 'File is being processed. You will be notified when it is ready.', 'file' => $fileName]);
+        ProcessFileForRAG::dispatch($storagePath, $fileName, $userId);
+        
+        return response()->json([
+            'reply' => 'File is being processed. You will be notified when it is ready.', 
+            'file' => $fileName,
+            'file_id' => $userFile->id
+        ]);
     }
 
     /**
@@ -496,24 +529,127 @@ EOT;
     public function getAvailableFiles()
     {
         try {
-            $files = \Illuminate\Support\Facades\DB::table('rag_chunks')
-                ->select('source', \Illuminate\Support\Facades\DB::raw('COUNT(*) as chunk_count'))
-                ->groupBy('source')
-                ->orderBy('source')
+            // Check if user is authenticated
+            if (!Auth::check()) {
+                return response()->json([
+                    'files' => [],
+                    'total_files' => 0,
+                    'error' => 'Authentication required'
+                ], 401);
+            }
+            
+            $userId = Auth::id();
+            
+            // Get user's own files
+            $userFiles = UserFile::where('user_id', $userId)
+                ->where('processing_status', 'completed')
+                ->get();
+            
+            // Get files shared with this user
+            $sharedFiles = UserFile::whereJsonContains('shared_with_users', $userId)
+                ->where('processing_status', 'completed')
+                ->get();
+            
+            // Get public files
+            $publicFiles = UserFile::where('is_public', true)
+                ->where('processing_status', 'completed')
+                ->get();
+            
+            // Get system files (files that exist in rag_chunks but not in user_files)
+            $systemFiles = \Illuminate\Support\Facades\DB::table('rag_chunks')
+                ->select('source')
+                ->distinct()
+                ->whereNotIn('source', function($query) {
+                    $query->select('original_name')->from('user_files');
+                })
                 ->get()
                 ->map(function ($file) {
+                    $chunkCount = \Illuminate\Support\Facades\DB::table('rag_chunks')
+                        ->where('source', $file->source)
+                        ->count();
+                    
                     return [
+                        'id' => 'system_' . md5($file->source), // Generate a unique ID for system files
                         'name' => $file->source,
-                        'chunk_count' => $file->chunk_count,
-                        'is_system_document' => $this->isSystemDocument($file->source),
+                        'chunk_count' => $chunkCount,
+                        'is_system_document' => true,
                         'file_type' => $this->getFileType($file->source),
-                        'file_size' => $this->getFileSize($file->source)
+                        'file_size' => $this->getFileSize($file->source),
+                        'owner' => 'System',
+                        'is_owner' => false,
+                        'is_public' => true,
+                        'shared_with' => []
                     ];
                 });
             
+            // Convert user files to arrays
+            $userFilesArray = $userFiles->map(function ($file) {
+                $chunkCount = RagChunk::where('source', $file->original_name)
+                    ->where('user_id', $file->user_id)
+                    ->count();
+                
+                return [
+                    'id' => $file->id,
+                    'name' => $file->original_name,
+                    'chunk_count' => $chunkCount,
+                    'is_system_document' => $this->isSystemDocument($file->original_name),
+                    'file_type' => $file->file_type ?: $this->getFileType($file->original_name),
+                    'file_size' => $this->formatFileSize($file->file_size),
+                    'owner' => $file->user->name,
+                    'is_owner' => $file->user_id === Auth::id(),
+                    'is_public' => $file->is_public,
+                    'shared_with' => $file->shared_with_users ?? []
+                ];
+            });
+            
+            $sharedFilesArray = $sharedFiles->map(function ($file) {
+                $chunkCount = RagChunk::where('source', $file->original_name)
+                    ->where('user_id', $file->user_id)
+                    ->count();
+                
+                return [
+                    'id' => $file->id,
+                    'name' => $file->original_name,
+                    'chunk_count' => $chunkCount,
+                    'is_system_document' => $this->isSystemDocument($file->original_name),
+                    'file_type' => $file->file_type ?: $this->getFileType($file->original_name),
+                    'file_size' => $this->formatFileSize($file->file_size),
+                    'owner' => $file->user->name,
+                    'is_owner' => $file->user_id === Auth::id(),
+                    'is_public' => $file->is_public,
+                    'shared_with' => $file->shared_with_users ?? []
+                ];
+            });
+            
+            $publicFilesArray = $publicFiles->map(function ($file) {
+                $chunkCount = RagChunk::where('source', $file->original_name)
+                    ->where('user_id', $file->user_id)
+                    ->count();
+                
+                return [
+                    'id' => $file->id,
+                    'name' => $file->original_name,
+                    'chunk_count' => $chunkCount,
+                    'is_system_document' => $this->isSystemDocument($file->original_name),
+                    'file_type' => $file->file_type ?: $this->getFileType($file->original_name),
+                    'file_size' => $this->formatFileSize($file->file_size),
+                    'owner' => $file->user->name,
+                    'is_owner' => $file->user_id === Auth::id(),
+                    'is_public' => $file->is_public,
+                    'shared_with' => $file->shared_with_users ?? []
+                ];
+            });
+            
+            // Combine all file arrays
+            $allFilesArray = collect($userFilesArray)
+                ->merge($sharedFilesArray)
+                ->merge($publicFilesArray)
+                ->merge($systemFiles)
+                ->unique('id');
+            
             return response()->json([
-                'files' => $files,
-                'total_files' => $files->count()
+                'files' => $allFilesArray,
+                'total_files' => $allFilesArray->count()
             ]);
         } catch (\Exception $e) {
             return response()->json([
@@ -614,12 +750,20 @@ EOT;
             ->where('source', $filename)
             ->sum(\Illuminate\Support\Facades\DB::raw('LENGTH(chunk)'));
         
-        if ($totalSize < 1024) {
-            return $totalSize . ' B';
-        } elseif ($totalSize < 1024 * 1024) {
-            return round($totalSize / 1024, 1) . ' KB';
+        return $this->formatFileSize($totalSize);
+    }
+
+    /**
+     * Format file size in human-readable format.
+     */
+    private function formatFileSize(int $bytes): string
+    {
+        if ($bytes < 1024) {
+            return $bytes . ' B';
+        } elseif ($bytes < 1024 * 1024) {
+            return round($bytes / 1024, 1) . ' KB';
         } else {
-            return round($totalSize / (1024 * 1024), 1) . ' MB';
+            return round($bytes / (1024 * 1024), 1) . ' MB';
         }
     }
 
@@ -677,6 +821,124 @@ EOT;
             'chunks' => $chunks,
             'total_chunks' => $chunks->count()
         ]);
+    }
+
+    /**
+     * Update file sharing settings.
+     */
+    public function updateFileSharing(Request $request)
+    {
+        if (!Auth::check()) {
+            return response()->json(['error' => 'Authentication required'], 401);
+        }
+
+        $request->validate([
+            'file_id' => 'required|exists:user_files,id',
+            'is_public' => 'boolean',
+            'shared_with' => 'array',
+            'shared_with.*' => 'exists:users,id'
+        ]);
+
+        $file = \App\Models\UserFile::findOrFail($request->file_id);
+        
+        // Check if user owns this file
+        if ($file->user_id !== Auth::id()) {
+            return response()->json(['error' => 'Unauthorized'], 403);
+        }
+
+        $file->update([
+            'is_public' => $request->boolean('is_public', false),
+            'shared_with_users' => $request->input('shared_with', [])
+        ]);
+
+        return response()->json([
+            'message' => 'File sharing updated successfully',
+            'file' => $file->fresh()
+        ]);
+    }
+
+    /**
+     * Delete a file.
+     */
+    public function deleteFile(Request $request)
+    {
+        if (!Auth::check()) {
+            return response()->json(['error' => 'Authentication required'], 401);
+        }
+
+        $request->validate([
+            'file_id' => 'required|exists:user_files,id'
+        ]);
+
+        $file = \App\Models\UserFile::findOrFail($request->file_id);
+        
+        // Check if user owns this file
+        if ($file->user_id !== Auth::id()) {
+            return response()->json(['error' => 'Unauthorized'], 403);
+        }
+
+        try {
+            // Delete physical file
+            if (Storage::disk('local')->exists($file->storage_path)) {
+                Storage::disk('local')->delete($file->storage_path);
+            }
+
+            // Delete RAG chunks
+            \Illuminate\Support\Facades\DB::table('rag_chunks')
+                ->where('source', $file->original_name)
+                ->where('user_id', $file->user_id)
+                ->delete();
+
+            // Delete file record
+            $file->delete();
+
+            return response()->json(['message' => 'File deleted successfully']);
+        } catch (\Exception $e) {
+            return response()->json(['error' => 'Failed to delete file: ' . $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Get file details for sharing modal.
+     */
+    public function getFileDetails(Request $request)
+    {
+        if (!Auth::check()) {
+            return response()->json(['error' => 'Authentication required'], 401);
+        }
+
+        $request->validate([
+            'file_id' => 'required|exists:user_files,id'
+        ]);
+
+        $file = \App\Models\UserFile::with('user')->findOrFail($request->file_id);
+        
+        // Check if user can access this file
+        if (!$file->canBeAccessedBy(Auth::user())) {
+            return response()->json(['error' => 'Unauthorized'], 403);
+        }
+
+        return response()->json([
+            'file' => $file,
+            'can_edit' => $file->user_id === Auth::id()
+        ]);
+    }
+
+    /**
+     * Get users for sharing dropdown.
+     */
+    public function getUsers(Request $request)
+    {
+        if (!Auth::check()) {
+            return response()->json(['error' => 'Authentication required'], 401);
+        }
+
+        $users = \App\Models\User::where('id', '!=', Auth::id())
+            ->select('id', 'name', 'email')
+            ->orderBy('name')
+            ->get();
+
+        return response()->json(['users' => $users]);
     }
 
     /**
@@ -774,8 +1036,41 @@ EOT;
     private function searchRelevantFileContent(string $userMessage, array $selectedFiles = []): array
     {
         try {
+            // Get current user ID if authenticated
+            $userId = Auth::check() ? Auth::id() : null;
+            
             // First check if there are any processed files available
-            $totalChunks = \Illuminate\Support\Facades\DB::table('rag_chunks')->count();
+            $query = \Illuminate\Support\Facades\DB::table('rag_chunks');
+            if ($userId !== null) {
+                $query->where(function($q) use ($userId) {
+                    $q->where('user_id', $userId) // User's own files
+                      ->orWhereExists(function($subQuery) use ($userId) {
+                          $subQuery->select(\Illuminate\Support\Facades\DB::raw(1))
+                                   ->from('user_files')
+                                   ->whereColumn('user_files.original_name', 'rag_chunks.source')
+                                   ->whereColumn('user_files.user_id', 'rag_chunks.user_id')
+                                   ->where(function($uf) use ($userId) {
+                                       $uf->whereJsonContains('user_files.shared_with_users', $userId)
+                                          ->orWhere('user_files.is_public', true);
+                                   });
+                      })
+                      ->orWhereNotExists(function($subQuery) {
+                          // Include system files (files that don't have user_files records)
+                          $subQuery->select(\Illuminate\Support\Facades\DB::raw(1))
+                                   ->from('user_files')
+                                   ->whereColumn('user_files.original_name', 'rag_chunks.source');
+                      });
+                });
+            } else {
+                // For unauthenticated users, only include system files
+                $query->whereNotExists(function($subQuery) {
+                    $subQuery->select(\Illuminate\Support\Facades\DB::raw(1))
+                             ->from('user_files')
+                             ->whereColumn('user_files.original_name', 'rag_chunks.source');
+                });
+            }
+            
+            $totalChunks = $query->count();
             if ($totalChunks === 0) {
                 \Illuminate\Support\Facades\Log::info('No processed files available for RAG search');
                 return [];
@@ -793,7 +1088,7 @@ EOT;
             }
             
             // Search for similar chunks
-            $similarChunks = $vectorSearch->searchSimilar($queryEmbedding, 5, $selectedFiles); // Get top 5 most relevant chunks
+            $similarChunks = $vectorSearch->searchSimilar($queryEmbedding, 5, $selectedFiles, $userId); // Get top 5 most relevant chunks
             
             // Filter out low similarity results (threshold of 0.3)
             $relevantChunks = array_filter($similarChunks, function($chunk) {

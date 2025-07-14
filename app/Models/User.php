@@ -6,6 +6,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class User extends Authenticatable
 {
@@ -44,5 +45,30 @@ class User extends Authenticatable
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
         ];
+    }
+
+    /**
+     * Get the files owned by this user.
+     */
+    public function files(): HasMany
+    {
+        return $this->hasMany(UserFile::class);
+    }
+
+    /**
+     * Get the RAG chunks owned by this user.
+     */
+    public function ragChunks(): HasMany
+    {
+        return $this->hasMany(RagChunk::class);
+    }
+
+    /**
+     * Get files shared with this user.
+     */
+    public function sharedFiles()
+    {
+        return UserFile::whereJsonContains('shared_with_users', $this->id)
+            ->orWhere('is_public', true);
     }
 }

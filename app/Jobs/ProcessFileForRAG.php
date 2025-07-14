@@ -20,11 +20,13 @@ class ProcessFileForRAG implements ShouldQueue
 
     public $filePath;
     public $fileName;
+    public $userId;
 
-    public function __construct($filePath, $fileName)
+    public function __construct($filePath, $fileName, $userId = null)
     {
         $this->filePath = $filePath;
         $this->fileName = $fileName;
+        $this->userId = $userId;
     }
 
     public function handle()
@@ -97,7 +99,7 @@ class ProcessFileForRAG implements ShouldQueue
             foreach ($chunks as $chunk) {
                 $embedding = $embedder->getEmbedding($chunk);
                 if ($embedding) {
-                    $vectorSearch->storeChunk($this->fileName, $chunk, $embedding);
+                    $vectorSearch->storeChunk($this->fileName, $chunk, $embedding, $this->userId);
                 }
             }
             
