@@ -125,8 +125,10 @@
             <button class="btn btn-primary" type="submit">Send</button>
         </form>
         <div class="d-flex align-items-center gap-2">
-            <input type="checkbox" id="auto-retry" style="width:auto;" checked>
-            <label for="auto-retry" class="mb-0">Retry sending output if connection is lost</label>
+            <div class="form-check">
+                <input type="checkbox" class="form-check-input" id="auto-retry" checked>
+                <label class="form-check-label" for="auto-retry">Retry sending output if connection is lost</label>
+            </div>
         </div>
     </div>
     <div class="basa-disclaimer-bar w-100 bg-light text-center fw-lighter py-2 small text-muted" style="position: sticky; bottom: 0; left: 0; z-index: 9; border-top: 1px solid #e0e0e0;">

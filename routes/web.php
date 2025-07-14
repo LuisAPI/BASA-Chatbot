@@ -1,48 +1,40 @@
 <?php
 
-use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\ChatbotController;
-use App\Events\FileProcessed;
-use App\Events\FileFailed;
+use Illuminate\Support\Facades\Route;
 
 Route::get('/', function () {
     return view('welcome');
 });
 
-Route::get('/chatbot', [ChatbotController::class, 'index']);
-Route::get('/chatbot/ask', [ChatbotController::class, 'ask']);
-Route::post('/chatbot/ask', [ChatbotController::class, 'ask']);
+Route::get('/dashboard', function () {
+    return view('dashboard');
+})->middleware(['auth', 'verified'])->name('dashboard');
 
-// File upload for chatbot
-Route::post('/chatbot/upload', [App\Http\Controllers\ChatbotController::class, 'upload']);
-
-// Stream LLM output as tokens arrive
-Route::post('/chatbot/stream', [App\Http\Controllers\ChatbotController::class, 'streamLLM']);
-
-// Endpoint for frontend to check if streaming is enabled
-Route::get('/chatbot/streaming-enabled', [App\Http\Controllers\ChatbotController::class, 'streamingEnabled']);
-
-// Endpoint for checking file processing status (polling)
-Route::post('/chatbot/processing-status', [App\Http\Controllers\ChatbotController::class, 'processingStatus']);
-
-// Endpoint for getting RAG information
-Route::get('/chatbot/rag-info', [App\Http\Controllers\ChatbotController::class, 'getRagInfo']);
-
-// Endpoint for getting available files for selection
-Route::get('/chatbot/available-files', [App\Http\Controllers\ChatbotController::class, 'getAvailableFiles']);
-
-// File gallery routes
-Route::get('/chatbot/files', [App\Http\Controllers\ChatbotController::class, 'fileGallery']);
-Route::post('/chatbot/file-chunks', [App\Http\Controllers\ChatbotController::class, 'getFileChunks']);
-
-// Debug RAG search
-Route::post('/chatbot/debug-rag', [App\Http\Controllers\ChatbotController::class, 'debugRagSearch']);
-
-Route::get('/test-broadcast', function () {
-    event(new FileProcessed('test.txt'));
-    return 'Sent';
+Route::middleware('auth')->group(function () {
+    Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
+    Route::patch('/profile', [ProfileController::class, 'update'])->name('profile.update');
+    Route::delete('/profile', [ProfileController::class, 'destroy'])->name('profile.destroy');
+    
+    // Chatbot routes (require authentication)
+    Route::get('/chatbot', [ChatbotController::class, 'index'])->name('chatbot');
+    Route::post('/chatbot/ask', [ChatbotController::class, 'ask'])->name('chatbot.ask');
+    Route::post('/chatbot/upload', [ChatbotController::class, 'upload'])->name('chatbot.upload');
+    Route::post('/chatbot/stream', [ChatbotController::class, 'streamLLM'])->name('chatbot.stream');
+    Route::get('/chatbot/streaming-enabled', [ChatbotController::class, 'streamingEnabled'])->name('chatbot.streaming-enabled');
+    Route::post('/chatbot/processing-status', [ChatbotController::class, 'processingStatus'])->name('chatbot.processing-status');
+    Route::get('/chatbot/rag-info', [ChatbotController::class, 'getRagInfo'])->name('chatbot.rag-info');
+    Route::get('/chatbot/available-files', [ChatbotController::class, 'getAvailableFiles'])->name('chatbot.available-files');
+    Route::get('/chatbot/files', [ChatbotController::class, 'fileGallery'])->name('chatbot.files');
+    Route::post('/chatbot/file-chunks', [ChatbotController::class, 'getFileChunks'])->name('chatbot.file-chunks');
+    Route::post('/chatbot/debug-rag', [ChatbotController::class, 'debugRagSearch'])->name('chatbot.debug-rag');
+    
+    // File management routes (now handled by ChatbotController)
+    Route::post('/chatbot/files/update-sharing', [ChatbotController::class, 'updateFileSharing'])->name('chatbot.files.update-sharing');
+    Route::delete('/chatbot/files/delete', [ChatbotController::class, 'deleteFile'])->name('chatbot.files.delete');
+    Route::get('/chatbot/files/details', [ChatbotController::class, 'getFileDetails'])->name('chatbot.files.details');
+    Route::get('/chatbot/files/users', [ChatbotController::class, 'getUsers'])->name('chatbot.files.users');
 });
-Route::get('/test-broadcast-fail', function () {
-    event(new FileFailed('test.txt', 'This is a test error'));
-    return 'Sent';
-});
+
+require __DIR__.'/auth.php';
