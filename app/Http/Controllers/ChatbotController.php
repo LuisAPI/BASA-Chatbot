@@ -51,6 +51,7 @@ class ChatbotController extends Controller
         // Check if the user message contains a URL (with or without a question)
         $url = null;
         $question = null;
+        $urlContent = null;
         if (preg_match('/(https?:\/\/[^\s]+)/i', $userMessage, $matches)) {
             $url = $matches[1];
             $question = trim(str_replace($url, '', $userMessage));
@@ -58,10 +59,15 @@ class ChatbotController extends Controller
                 $question = 'Summarize the following webpage.';
             }
             $webResult = $this->fetchAndParseWebpage($url);
-            if (isset($webResult['error'])) {
-                return response()->json(['reply' => $webResult['error']]);
+            if ($webResult['type'] === 'error') {
+                return response()->json(['reply' => $webResult['error'], 'type' => 'error']);
             }
-            $userMessage = $question . " Title: {$webResult['title']}. Content: {$webResult['content']}";
+            $urlContent = [
+                'title' => $webResult['title'],
+                'content' => $webResult['content'],
+                'url' => $url
+            ];
+            $userMessage = $question;
         }
 
         // Only perform RAG search if files are explicitly selected
@@ -70,7 +76,7 @@ class ChatbotController extends Controller
             $relevantContent = $this->searchRelevantFileContent($userMessage, $selectedFiles);
         }
         
-        $botReply = $this->sendToLLM($userMessage, null, $relevantContent);
+        $botReply = $this->sendToLLM($userMessage, null, $relevantContent, $urlContent);
         
         return response()->json([
             'reply' => $botReply,
@@ -194,15 +200,26 @@ EOT;
      * Send a prompt to the LLM and return the response.
      * If streaming is enabled, handle streamed responses.
      */
-    private function sendToLLM(string $prompt, ?string $systemPrompt = null, ?array $relevantContent = null): string
+    private function sendToLLM(string $prompt, ?string $systemPrompt = null, ?array $relevantContent = null, ?array $urlContent = null): string
     {
         // Set execution time limit for this request
         set_time_limit(120); // 2 minutes
         
         $systemPrompt = $systemPrompt ?? $this->getSystemPrompt();
         
-        // If we have relevant content from uploaded files, prioritize it
-        if ($relevantContent && !empty($relevantContent)) {
+        // If we have URL content, prioritize it over everything else
+        if ($urlContent && !empty($urlContent)) {
+            $urlContext = "CRITICAL INSTRUCTION: You are being asked about a specific webpage. Use ONLY the following webpage content to answer the question. Do NOT use any other knowledge or information. If the answer is not in the webpage content, say 'I cannot find that information in the provided webpage.'\n\n";
+            $urlContext .= "WEBPAGE TITLE: {$urlContent['title']}\n";
+            $urlContext .= "WEBPAGE URL: {$urlContent['url']}\n";
+            $urlContext .= "WEBPAGE CONTENT:\n{$urlContent['content']}\n\n";
+            $urlContext .= "QUESTION: {$prompt}\n\n";
+            $urlContext .= "IMPORTANT: Base your answer ONLY on the webpage content above. Do not use any other knowledge about DEPDev or government structure unless it's specifically mentioned in the webpage.";
+            
+            $prompt = $urlContext;
+        }
+        // If we have relevant content from uploaded files (and no URL), prioritize it
+        elseif ($relevantContent && !empty($relevantContent)) {
             // Only use the top 2 most relevant chunks
             $fileContext = $this->buildFileContext(array_slice($relevantContent, 0, 2));
             // Prepend the context and a strong instruction to the user prompt
@@ -323,118 +340,154 @@ EOT;
      */
     public function streamLLM(Request $request)
     {
-        // Set execution time limit for this request
-        set_time_limit(120); // 2 minutes
-        
-        $prompt = $request->input('message');
-        $selectedFiles = $request->input('selected_files', []); // New: array of selected file names
-        $systemPrompt = $this->getSystemPrompt();
-        $model = env('LLM_MODEL', 'tinyllama');
-        
-        // Only perform RAG search if files are explicitly selected
-        $relevantContent = [];
-        if (!empty($selectedFiles)) {
-            $relevantContent = $this->searchRelevantFileContent($prompt, $selectedFiles);
-        }
-        
-        // If we have relevant content from uploaded files, prioritize it
-        if ($relevantContent && !empty($relevantContent)) {
-            // Only use the top 2 most relevant chunks
-            $fileContext = $this->buildFileContext(array_slice($relevantContent, 0, 2));
-            // Prepend the context and a strong instruction to the user prompt
-            $prompt = "IMPORTANT: Use ONLY the following file content to answer. If the answer is not present, say 'I don't know.'\n\n" . $fileContext . "\n\nQUESTION: " . $prompt;
-            // Add specific instructions for structured content
-            $prompt = "STRUCTURED CONTENT INSTRUCTIONS: The following content may be from PowerPoint presentations, Excel spreadsheets, or other structured documents. Please:\n" .
-                     "1. Organize the information into clear, logical sections with proper headings\n" .
-                     "2. Use bullet points for lists and numbered items for sequences\n" .
-                     "3. Convert fragmented text into coherent, readable sentences and paragraphs\n" .
-                     "4. Group related information together by department, module, or timeline\n" .
-                     "5. Highlight key dates, milestones, and status indicators clearly\n" .
-                     "6. Provide specific details from the content, not generic summaries\n" .
-                     "7. Use the exact names, dates, and statuses mentioned in the source\n" .
-                     "8. Structure the response with clear sections and subsections\n\n" .
-                     $prompt;
-        }
-        
         try {
-            $endpoint = $this->ollamaService->getActiveEndpoint();
-            if (!$endpoint) {
-                return response()->json(['error' => 'Could not connect to any Ollama instance. Please check if Ollama is running.'], 500);
+            // Set execution time limit for this request
+            set_time_limit(120); // 2 minutes
+            
+            $prompt = $request->input('message');
+            $selectedFiles = $request->input('selected_files', []); // New: array of selected file names
+            $systemPrompt = $this->getSystemPrompt();
+            $model = env('LLM_MODEL', 'tinyllama');
+
+            // Check if the prompt contains a URL and handle fetch errors
+            $url = null;
+            $question = null;
+            $urlContent = null;
+            if (preg_match('/(https?:\/\/[^\s]+)/i', $prompt, $matches)) {
+                $url = $matches[1];
+                $question = trim(str_replace($url, '', $prompt));
+                if (empty($question)) {
+                    $question = 'Summarize the following webpage.';
+                }
+                try {
+                    $webResult = $this->fetchAndParseWebpage($url);
+                    if (!is_array($webResult) || !isset($webResult['type']) || $webResult['type'] === 'error') {
+                        $errorMsg = is_array($webResult) && isset($webResult['error'])
+                            ? $webResult['error']
+                            : 'Sorry, I could not fetch or process the webpage.';
+                        \Illuminate\Support\Facades\Log::warning('streamLLM: URL fetch error for ' . $url . ' - ' . $errorMsg);
+                        return response()->json(['reply' => $errorMsg, 'type' => 'error']);
+                    }
+                    $urlContent = [
+                        'title' => $webResult['title'],
+                        'content' => $webResult['content'],
+                        'url' => $url
+                    ];
+                    $prompt = $question;
+                } catch (\Exception $e) {
+                    \Illuminate\Support\Facades\Log::error('streamLLM: Exception during fetchAndParseWebpage for ' . $url . ' - ' . $e->getMessage());
+                    return response()->json(['reply' => 'Sorry, I could not fetch or process the webpage.', 'type' => 'error']);
+                }
             }
 
-            return response()->stream(function () use ($prompt, $systemPrompt, $model, $endpoint) {
-                // Set execution time limit for the stream function
-                set_time_limit(120);
-                
-                $client = new \GuzzleHttp\Client([
-                    'timeout' => 90, // 90 seconds timeout
-                    'connect_timeout' => 10, // 10 seconds connection timeout
-                    'read_timeout' => 90 // 90 seconds read timeout
-                ]);
-                
-                // Add authentication headers if required
-                $headers = ['Content-Type' => 'application/json'];
-                if (config('ollama.require_auth') && config('ollama.api_key')) {
-                    $headers['Authorization'] = 'Bearer ' . config('ollama.api_key');
+            // Only perform RAG search if files are explicitly selected
+            $relevantContent = [];
+            if (!empty($selectedFiles)) {
+                $relevantContent = $this->searchRelevantFileContent($prompt, $selectedFiles);
+            }
+            
+            // If we have relevant content from uploaded files, prioritize it
+            if ($relevantContent && !empty($relevantContent)) {
+                // Only use the top 2 most relevant chunks
+                $fileContext = $this->buildFileContext(array_slice($relevantContent, 0, 2));
+                // Prepend the context and a strong instruction to the user prompt
+                $prompt = "IMPORTANT: Use ONLY the following file content to answer. If the answer is not present, say 'I don't know.'\n\n" . $fileContext . "\n\nQUESTION: " . $prompt;
+                // Add specific instructions for structured content
+                $prompt = "STRUCTURED CONTENT INSTRUCTIONS: The following content may be from PowerPoint presentations, Excel spreadsheets, or other structured documents. Please:\n" .
+                         "1. Organize the information into clear, logical sections with proper headings\n" .
+                         "2. Use bullet points for lists and numbered items for sequences\n" .
+                         "3. Convert fragmented text into coherent, readable sentences and paragraphs\n" .
+                         "4. Group related information together by department, module, or timeline\n" .
+                         "5. Highlight key dates, milestones, and status indicators clearly\n" .
+                         "6. Provide specific details from the content, not generic summaries\n" .
+                         "7. Use the exact names, dates, and statuses mentioned in the source\n" .
+                         "8. Structure the response with clear sections and subsections\n\n" .
+                         $prompt;
+            }
+            
+            try {
+                $endpoint = $this->ollamaService->getActiveEndpoint();
+                if (!$endpoint) {
+                    \Illuminate\Support\Facades\Log::error('streamLLM: Could not connect to any Ollama instance.');
+                    return response()->json(['error' => 'Could not connect to any Ollama instance. Please check if Ollama is running.'], 500);
                 }
-                
-                $res = $client->post($endpoint . '/api/generate', [
-                    'headers' => $headers,
-                    'json' => [
-                        'model' => $model,
-                        'system' => $systemPrompt,
-                        'prompt' => $prompt,
-                        'stream' => true
-                    ],
-                    'stream' => true
-                ]);
-                
-                $body = $res->getBody();
-                $buffer = '';
-                $startTime = time();
-                $maxDuration = 90; // Maximum 90 seconds for the entire response
-                
-                while (!$body->eof()) {
-                    // Check if we've exceeded the maximum duration
-                    if (time() - $startTime > $maxDuration) {
-                        \Illuminate\Support\Facades\Log::warning('Stream timeout reached, stopping response');
-                        break;
+
+                return response()->stream(function () use ($prompt, $systemPrompt, $model, $endpoint) {
+                    // Set execution time limit for the stream function
+                    set_time_limit(120);
+                    
+                    $client = new \GuzzleHttp\Client([
+                        'timeout' => 90, // 90 seconds timeout
+                        'connect_timeout' => 10, // 10 seconds connection timeout
+                        'read_timeout' => 90 // 90 seconds read timeout
+                    ]);
+                    
+                    // Add authentication headers if required
+                    $headers = ['Content-Type' => 'application/json'];
+                    if (config('ollama.require_auth') && config('ollama.api_key')) {
+                        $headers['Authorization'] = 'Bearer ' . config('ollama.api_key');
                     }
                     
-                    $buffer .= $body->read(4096);
-                    while (($pos = strpos($buffer, "\n")) !== false) {
-                        $line = trim(substr($buffer, 0, $pos));
-                        $buffer = substr($buffer, $pos + 1);
-                        if ($line) {
-                            $json = json_decode($line, true);
-                            if (isset($json['response'])) {
-                                echo $json['response'];
-                                ob_flush();
-                                flush();
-                            }
-                            // Check if this is the final response
-                            if (isset($json['done']) && $json['done'] === true) {
-                                return;
+                    $res = $client->post($endpoint . '/api/generate', [
+                        'headers' => $headers,
+                        'json' => [
+                            'model' => $model,
+                            'system' => $systemPrompt,
+                            'prompt' => $prompt,
+                            'stream' => true
+                        ],
+                        'stream' => true
+                    ]);
+                    
+                    $body = $res->getBody();
+                    $buffer = '';
+                    $startTime = time();
+                    $maxDuration = 90; // Maximum 90 seconds for the entire response
+                    
+                    while (!$body->eof()) {
+                        // Check if we've exceeded the maximum duration
+                        if (time() - $startTime > $maxDuration) {
+                            \Illuminate\Support\Facades\Log::warning('Stream timeout reached, stopping response');
+                            break;
+                        }
+                        
+                        $buffer .= $body->read(4096);
+                        while (($pos = strpos($buffer, "\n")) !== false) {
+                            $line = trim(substr($buffer, 0, $pos));
+                            $buffer = substr($buffer, $pos + 1);
+                            if ($line) {
+                                $json = json_decode($line, true);
+                                if (isset($json['response'])) {
+                                    echo $json['response'];
+                                    ob_flush();
+                                    flush();
+                                }
+                                // Check if this is the final response
+                                if (isset($json['done']) && $json['done'] === true) {
+                                    return;
+                                }
                             }
                         }
                     }
+                }, 200, [
+                    'Content-Type' => 'text/event-stream',
+                    'Cache-Control' => 'no-cache',
+                    'X-Accel-Buffering' => 'no'
+                ]);
+            } catch (\Exception $e) {
+                \Illuminate\Support\Facades\Log::error('streamLLM: Streaming failed - ' . $e->getMessage());
+                // Try non-streaming mode as fallback
+                try {
+                    $response = $this->sendToLLM($prompt, $systemPrompt, $relevantContent);
+                    return response()->json(['reply' => $response]);
+                } catch (\Exception $fallbackError) {
+                    \Illuminate\Support\Facades\Log::error('streamLLM: Fallback also failed - ' . $fallbackError->getMessage());
+                    return response()->json(['error' => 'Service temporarily unavailable. Please try again.'], 500);
                 }
-            }, 200, [
-                'Content-Type' => 'text/event-stream',
-                'Cache-Control' => 'no-cache',
-                'X-Accel-Buffering' => 'no'
-            ]);
-        } catch (\Exception $e) {
-            \Illuminate\Support\Facades\Log::error('Streaming failed: ' . $e->getMessage());
-            
-            // Try non-streaming mode as fallback
-            try {
-                $response = $this->sendToLLM($prompt, $systemPrompt, $relevantContent);
-                return response()->json(['reply' => $response]);
-            } catch (\Exception $fallbackError) {
-                \Illuminate\Support\Facades\Log::error('Fallback also failed: ' . $fallbackError->getMessage());
-                return response()->json(['error' => 'Service temporarily unavailable. Please try again.'], 500);
             }
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('streamLLM: Unhandled exception - ' . $e->getMessage());
+            return response()->json(['reply' => 'Sorry, an unexpected error occurred while processing your request.', 'type' => 'error']);
         }
     }
 
@@ -980,7 +1033,15 @@ EOT;
         $parsedUrl = parse_url($url);
         $robotsUrl = $parsedUrl['scheme'] . '://' . $parsedUrl['host'] . '/robots.txt';
         try {
-            $robotsResponse = \Illuminate\Support\Facades\Http::timeout(5)->get($robotsUrl);
+            $robotsResponse = \Illuminate\Support\Facades\Http::timeout(5)
+                ->withOptions([
+                    'verify' => false, // Disable SSL certificate verification
+                    'curl' => [
+                        CURLOPT_SSL_VERIFYPEER => false,
+                        CURLOPT_SSL_VERIFYHOST => false
+                    ]
+                ])
+                ->get($robotsUrl);
             $robotsTxt = $robotsResponse->successful() ? $robotsResponse->body() : '';
             $isAllowed = true;
             if ($robotsTxt) {
@@ -1002,7 +1063,10 @@ EOT;
                 }
             }
             if (!$isAllowed) {
-                return ['error' => 'Sorry, I am not allowed to access this page due to the site\'s robots.txt rules.'];
+                return [
+                    'type' => 'error',
+                    'error' => "Sorry, I am not allowed to access this page due to the site's robots.txt rules."
+                ];
             }
         } catch (\Exception $e) {
             // If robots.txt fails, proceed (fail open)
@@ -1010,6 +1074,13 @@ EOT;
         try {
             $webResponse = \Illuminate\Support\Facades\Http::timeout(10)
                 ->withHeaders(['User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'])
+                ->withOptions([
+                    'verify' => false, // Disable SSL certificate verification
+                    'curl' => [
+                        CURLOPT_SSL_VERIFYPEER => false,
+                        CURLOPT_SSL_VERIFYHOST => false
+                    ]
+                ])
                 ->get($url);
             $html = $webResponse->body();
             $readability = new \fivefilters\Readability\Readability(new \fivefilters\Readability\Configuration());
@@ -1017,15 +1088,26 @@ EOT;
             $content = $readability->getContent();
             $title = $readability->getTitle();
             $content = strip_tags($content);
+            // Check for empty, very short, or generic content
+            if (empty($content) || strlen(trim($content)) < 100 || preg_match('/(login|access denied|forbidden|error|not found|page cannot be displayed|maintenance|temporarily unavailable)/i', $content)) {
+                return [
+                    'type' => 'error',
+                    'error' => 'Sorry, I could not fetch or process the webpage, or the content is not accessible.'
+                ];
+            }
             if (strlen($content) > 4000) {
                 $content = substr($content, 0, 1000) . '... [truncated]';
             }
             return [
+                'type' => 'success',
                 'title' => $title,
                 'content' => $content
             ];
         } catch (\Exception $e) {
-            return ['error' => 'Sorry, I could not fetch or process the webpage.'];
+            return [
+                'type' => 'error',
+                'error' => 'Sorry, I could not fetch or process the webpage.'
+            ];
         }
     }
 
