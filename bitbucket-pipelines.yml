@@ -31,7 +31,7 @@ pipelines:
 
         # Setup SSH for Bitbucket
         - mkdir -p ~/.ssh
-        - echo "$BITBUCKET_SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+        - echo -e "$BITBUCKET_SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
         - chmod 600 ~/.ssh/id_ed25519
         - ssh-keyscan -t rsa bitbucket.org >> ~/.ssh/known_hosts
         - git config --global core.sshCommand "ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=yes"
