@@ -222,14 +222,33 @@ const applyFileSelectionBtn = document.getElementById('applyFileSelectionBtn');
 let selectedFiles = new Set(); // Track selected files for RAG context
 let allAvailableFiles = []; // Store all available files for filtering
 
-function addMessage(text, sender, isError = false, retryCallback = null, isLoading = false) {
+function appendAttachmentPreview(msgDiv, attachment) {
+    if (attachment) {
+        const previewDiv = document.createElement('div');
+        previewDiv.innerHTML = renderAttachmentPreview(attachment);
+        msgDiv.appendChild(previewDiv);
+    }
+}
+
+function addMessage(text, sender, isError = false, retryCallback = null, isLoading = false, type = null, attachment = null) {
+    // Detect error type for bot
+    const isBotError = (type === 'error') || (isError) || (sender === 'bot' && typeof text === 'string' && text.match(/^I\'m sorry, but I cannot access the webpage|Sorry, I could not fetch|not allowed to access this page|content is not accessible/i));
+    
     const msgDiv = document.createElement('div');
     msgDiv.className = 'chat-message';
     const avatar = document.createElement('div');
     avatar.className = 'chat-avatar ' + sender;
     avatar.textContent = sender === 'user' ? 'You' : 'Bot';
+
+    // Attachment preview (above message)
+    appendAttachmentPreview(msgDiv, attachment);
+
     const content = document.createElement('div');
-    content.className = 'chat-content ' + sender;
+    if (isBotError) {
+        content.className = 'alert alert-danger';
+    } else {
+        content.className = 'chat-content ' + sender;
+    }
     content.innerHTML = '';
     if (isLoading) {
         content.innerHTML = '<span class="loading-dots"><span></span><span></span><span></span></span>';
@@ -327,8 +346,8 @@ function addMessage(text, sender, isError = false, retryCallback = null, isLoadi
     chatLog.scrollTop = chatLog.scrollHeight;
 }
 
-async function sendMessage(msg) {
-    addMessage('', 'bot', false, null, true); // show loading dots
+async function sendMessage(msg, attachment = null) {
+    addMessage('', 'bot', false, null, true, null, attachment);
     let resp;
     try {
         resp = await fetch('/chatbot/ask', {
@@ -361,6 +380,7 @@ async function sendMessage(msg) {
             }
             
             let message = data.reply;
+            let type = data.type || null;
             
             // Add RAG information if used and debug is enabled
             if (data.rag_used && data.debug_enabled) {
@@ -380,7 +400,7 @@ async function sendMessage(msg) {
                 console.log('RAG not used - no relevant content found');
             }
             
-            addMessage(message, 'bot');
+            addMessage(message, 'bot', false, null, false, type);
         } catch (parseError) {
             console.error('Error parsing response:', parseError);
             addMessage('Error: Received invalid response from server. Please try again.', 'bot', true, () => {
@@ -400,9 +420,9 @@ async function sendMessage(msg) {
     }
 }
 
-async function streamMessage(msg) {
-    let retryCallback = () => streamMessage(msg);
-    addMessage('', 'bot', false, null, true);
+async function streamMessage(msg, attachment = null) {
+    let retryCallback = () => streamMessage(msg, attachment);
+    addMessage('', 'bot', false, null, true, null, attachment);
     const response = await fetch('/chatbot/stream', {
         method: 'POST',
         headers: {
@@ -415,37 +435,30 @@ async function streamMessage(msg) {
         })
     });
     chatLog.removeChild(chatLog.lastChild);
-    if (!response.ok) {
-        // Check if it's a JSON response (fallback from streaming)
-        const contentType = response.headers.get('content-type');
-        if (contentType && contentType.includes('application/json')) {
-            try {
-                return response.json().then(data => {
-                    if (data && data.reply) {
-                        addMessage(data.reply, 'bot');
-                    } else {
-                        addMessage('Error: Invalid response format from server.', 'bot', true, retryCallback);
-                    }
-                }).catch(error => {
-                    console.error('Error parsing JSON fallback:', error);
-                    addMessage('Error: Could not parse server response.', 'bot', true, retryCallback);
-                });
-            } catch (error) {
-                console.error('Error handling JSON fallback:', error);
-                addMessage('Error: Could not get response.', 'bot', true, retryCallback);
+
+    // Handle JSON error response before streaming
+    const contentType = response.headers.get('content-type');
+    if (!response.ok || (contentType && contentType.includes('application/json'))) {
+        try {
+            const data = await response.json();
+            if (data && data.type === 'error') {
+                addMessage(data.reply, 'bot', false, null, false, 'error', attachment);
+                return;
             }
+            if (data && data.reply) {
+                addMessage(data.reply, 'bot', false, null, false, null, attachment);
+                return;
+            }
+        } catch (e) {
+            addMessage('Error: Could not get response.', 'bot', true, retryCallback, false, null, attachment);
+            return;
         }
-        addMessage('Error: Could not get response.', 'bot', true, retryCallback);
-        if (autoRetry.checked) {
-            setTimeout(() => streamMessage(msg), 1000);
-        }
-        return;
     }
-    
+
     if (!response.body) {
-        addMessage('Error: Could not get response.', 'bot', true, retryCallback);
+        addMessage('Error: Could not get response.', 'bot', true, retryCallback, false, null, attachment);
         if (autoRetry.checked) {
-            setTimeout(() => streamMessage(msg), 1000);
+            setTimeout(() => streamMessage(msg, attachment), 1000);
         }
         return;
     }
@@ -473,30 +486,30 @@ async function streamMessage(msg) {
                 });
             } else {
                 // If for some reason the last message is not the bot, add a new one
-                addMessage(result, 'bot');
+                addMessage(result, 'bot', false, null, false, null, attachment);
             }
             chatLog.scrollTop = chatLog.scrollHeight;
         }
         if (!result.trim()) {
-            addMessage('No response from model.', 'bot', true, retryCallback);
+            addMessage('No response from model.', 'bot', true, retryCallback, false, null, attachment);
             if (autoRetry.checked) {
-                setTimeout(() => streamMessage(msg), 1000);
+                setTimeout(() => streamMessage(msg, attachment), 1000);
             }
         } else {
             // Finalize the message with addMessage to standardize formatting and add buttons
             chatLog.removeChild(chatLog.lastChild);
-            addMessage(result, 'bot');
+            addMessage(result, 'bot', false, null, false, null, attachment);
         }
     } catch (err) {
         hadError = true;
-        addMessage('Error: Could not get response.', 'bot', true, retryCallback);
+        addMessage('Error: Could not get response.', 'bot', true, retryCallback, false, null, attachment);
         if (autoRetry.checked) {
-            setTimeout(() => streamMessage(msg), 1000);
+            setTimeout(() => streamMessage(msg, attachment), 1000);
         }
     }
 }
 
-async function handleBotReply(msg) {
+async function handleBotReply(msg, attachment = null) {
     // Ask backend if streaming is enabled
     const resp = await fetch('/chatbot/streaming-enabled', { method: 'GET' });
     let isStreaming = false;
@@ -505,9 +518,9 @@ async function handleBotReply(msg) {
         isStreaming = !!data.streaming;
     }
     if (isStreaming) {
-        await streamMessage(msg);
+        await streamMessage(msg, attachment);
     } else {
-        await sendMessage(msg);
+        await sendMessage(msg, attachment);
     }
 }
 
@@ -528,11 +541,15 @@ messageInput.addEventListener('keydown', function(e) {
 chatForm.addEventListener('submit', function(e) {
     e.preventDefault();
     const msg = messageInput.value.trim();
-    if (!msg) return;
-    addMessage(msg, 'user');
+    const attachment = window.currentAttachment;
+    if (!msg && !attachment) return;
+    addMessage(msg, 'user', false, null, false, null, attachment);
     messageInput.value = '';
+    window.currentAttachment = null;
+    document.getElementById('file-pill-container').innerHTML = '';
+    document.getElementById('file-pill-container').style.display = 'none';
     // Use streaming or fallback to normal reply
-    handleBotReply(msg);
+    handleBotReply(msg, attachment);
 });
 
 document.getElementById('test-multiline').addEventListener('click', function() {
