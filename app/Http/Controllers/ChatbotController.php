@@ -667,12 +667,7 @@ EOT;
             
             // Convert user files to arrays
             $userFilesArray = $userFiles->map(function ($file) {
-                $chunkCount = RagChunk::where('source', $file->original_name)
-                    ->where('user_id', $file->user_id)
-                    ->whereHas('userFile', function($query) use ($file) {
-                        $query->where('id', $file->id);
-                    })
-                    ->count();
+                $chunkCount = $file->ragChunks()->count();
                 
                 return [
                     'id' => $file->id,

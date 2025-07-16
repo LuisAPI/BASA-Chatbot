@@ -41,11 +41,7 @@ class UserFile extends Model
      */
     public function ragChunks(): HasMany
     {
-        return $this->hasMany(RagChunk::class, 'source', 'original_name')
-            ->where('user_id', $this->user_id)
-            ->whereHas('userFile', function($query) {
-                $query->where('id', $this->id);
-            });
+        return $this->hasMany(RagChunk::class, 'user_file_id')->withTrashed();
     }
 
     /**
