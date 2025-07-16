@@ -17,13 +17,15 @@ class UserFile extends Model
         'is_public',
         'shared_with_users', // JSON array of user IDs
         'processing_status', // pending, processing, completed, failed
-        'error_message'
+        'error_message',
+        'processed_at'
     ];
 
     protected $casts = [
         'shared_with_users' => 'array',
         'is_public' => 'boolean',
-        'file_size' => 'integer'
+        'file_size' => 'integer',
+        'processed_at' => 'datetime'
     ];
 
     /**
