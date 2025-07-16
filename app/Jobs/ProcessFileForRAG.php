@@ -103,12 +103,29 @@ class ProcessFileForRAG implements ShouldQueue
                 }
             }
             
+            // Update the UserFile record to mark as completed
+            if ($this->userId) {
+                \App\Models\UserFile::where('user_id', $this->userId)
+                    ->where('original_name', $this->fileName)
+                    ->update(['processing_status' => 'completed']);
+            }
+            
             // Log the successful processing
             // Log::info('📦 Dispatching FileProcessed event for: ' . $this->fileName);
 
             // Dispatch the event after processing
             event(new FileProcessed($this->fileName, 'completed'));
         } catch (\Exception $e) {
+            // Update the UserFile record to mark as failed
+            if ($this->userId) {
+                \App\Models\UserFile::where('user_id', $this->userId)
+                    ->where('original_name', $this->fileName)
+                    ->update([
+                        'processing_status' => 'failed',
+                        'error_message' => $e->getMessage()
+                    ]);
+            }
+            
             // Dispatch failed event
             event(new FileProcessed($this->fileName, 'failed'));
             event(new \App\Events\FileFailed($this->fileName, $e->getMessage()));
