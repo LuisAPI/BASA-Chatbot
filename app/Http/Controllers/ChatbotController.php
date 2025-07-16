@@ -576,6 +576,26 @@ EOT;
         ]);
     }
 
+    // Temporary debug method
+    public function debugRagSources()
+    {
+        $sources = \Illuminate\Support\Facades\DB::table('rag_chunks')
+            ->select('source', 'user_id')
+            ->distinct()
+            ->get()
+            ->map(function($item) {
+                return [
+                    'source' => $item->source,
+                    'user_id' => $item->user_id,
+                    'storage_path' => \App\Models\UserFile::where('original_name', $item->source)
+                        ->where('user_id', $item->user_id)
+                        ->value('storage_path')
+                ];
+            });
+            
+        return response()->json($sources);
+    }
+
     /**
      * Get available files for selection in the chat interface.
      */
