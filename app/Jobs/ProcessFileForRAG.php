@@ -103,14 +103,16 @@ class ProcessFileForRAG implements ShouldQueue
                 }
             }
             
-            // Update the UserFile record to mark as completed
+            // Update the UserFile record with actual file size and mark as completed
             if ($this->userId) {
+                $fileSize = filesize($fullPath);
                 \App\Models\UserFile::where('user_id', $this->userId)
                     ->where('original_name', $this->fileName)
-                    ->where('storage_path', $this->filePath) // Ensure exact match
+                    ->where('storage_path', $this->filePath)
                     ->update([
                         'processing_status' => 'completed',
-                        'processed_at' => now()
+                        'processed_at' => now(),
+                        'file_size' => $fileSize
                     ]);
             }
             

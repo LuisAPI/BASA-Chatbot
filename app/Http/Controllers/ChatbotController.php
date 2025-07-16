@@ -832,6 +832,20 @@ EOT;
      */
     private function getFileSize(string $filename): string
     {
+        // First try to get from UserFile record
+        $userFile = UserFile::where('original_name', $filename)->first();
+        if ($userFile && $userFile->file_size > 0) {
+            return $this->formatFileSize($userFile->file_size);
+        }
+
+        // For system files, get actual file size from storage
+        if ($this->isSystemDocument($filename)) {
+            $path = str_replace(config('systemdocs.path_prefix'), '', $filename);
+            $size = \Illuminate\Support\Facades\Storage::disk('systemdocs')->size($path);
+            return $this->formatFileSize($size);
+        }
+
+        // Fallback to chunk length calculation
         $totalSize = \Illuminate\Support\Facades\DB::table('rag_chunks')
             ->where('source', $filename)
             ->sum(\Illuminate\Support\Facades\DB::raw('LENGTH(chunk)'));
