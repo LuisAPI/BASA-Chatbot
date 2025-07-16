@@ -139,17 +139,21 @@ class ReprocessRagFiles extends Command
      */
     private function findStoragePath(string $fileName): ?string
     {
-        // This is a simplified approach - in a real implementation,
-        // you might want to store the storage path in the database
-        // or have a more sophisticated file tracking system
-        
-        $storage = storage_path('app/uploads');
-        $files = glob($storage . '/*' . $fileName);
-        
-        if (!empty($files)) {
-            return str_replace(storage_path('app/'), '', $files[0]);
+        $basePath = storage_path('app/private/uploads');
+
+        // Recursive iterator to search all files under the directory
+        $iterator = new \RecursiveIteratorIterator(
+            new \RecursiveDirectoryIterator($basePath, \FilesystemIterator::SKIP_DOTS),
+            \RecursiveIteratorIterator::SELF_FIRST
+        );
+
+        foreach ($iterator as $file) {
+            if ($file->isFile() && $file->getFilename() === $fileName) {
+                // Return relative path from 'storage/app'
+                return str_replace(storage_path('app/') . DIRECTORY_SEPARATOR, '', $file->getRealPath());
+            }
         }
-        
-        return null;
+
+        return null; // Not found
     }
 } 

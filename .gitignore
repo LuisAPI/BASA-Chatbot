@@ -22,3 +22,7 @@
 Homestead.json
 Homestead.yaml
 Thumbs.db
+
+.aider.chat.history.md
+.aider.input.history
+/.aider.tags.cache.v*
