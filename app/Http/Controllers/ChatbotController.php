@@ -634,10 +634,9 @@ EOT;
                 ->select('source')
                 ->distinct()
                 ->whereNotIn('source', function($query) {
-                    $query->select('original_name')
-                        ->from('user_files')
-                        ->whereColumn('user_files.user_id', 'rag_chunks.user_id');
+                    $query->select('original_name')->from('user_files');
                 })
+                ->whereNull('user_id')  // System files have no user association
                 ->get()
                 ->map(function ($file) {
                     $chunkCount = \Illuminate\Support\Facades\DB::table('rag_chunks')
@@ -652,7 +651,8 @@ EOT;
                         'file_type' => $this->getFileType($file->source),
                         'file_size' => $this->getFileSize($file->source),
                         'owner' => 'DEPDev System',
-                        'user_id' => 0,  // System user ID
+                        'user_id' => null,  // System files have no owner
+                        'is_owner' => true,  // Accessible to all users
                         'is_owner' => false,
                         'is_public' => true,
                         'shared_with' => []
@@ -691,7 +691,7 @@ EOT;
                     'id' => $file->id,
                     'name' => $file->original_name,
                     'chunk_count' => $chunkCount,
-                    'is_system_document' => $this->isSystemDocument($file->original_name),
+                    'is_system_document' => $this->isSystemDocument($file->storage_path),
                     'file_type' => $file->file_type ?: $this->getFileType($file->original_name),
                     'file_size' => $this->formatFileSize($file->file_size),
                     'owner' => $file->user->name,
@@ -848,12 +848,12 @@ EOT;
     }
 
     /**
-     * Check if a file is a system document (from migrated system docs).
+     * Check if a file is a system document (from public/documents).
      */
     private function isSystemDocument(string $filename): bool
     {
-        // System documents are stored in the 'migrated' directory
-        return str_starts_with($filename, 'migrated/');
+        // System documents are stored in the public/documents directory
+        return str_starts_with($filename, 'public/documents/');
     }
 
     /**
