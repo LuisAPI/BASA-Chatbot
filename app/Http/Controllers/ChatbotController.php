@@ -672,7 +672,7 @@ EOT;
                     'id' => $file->id,
                     'name' => $file->original_name,
                     'chunk_count' => $chunkCount,
-                    'is_system_document' => $this->isSystemDocument($file->original_name),
+                    'is_system_document' => $this->isSystemDocument($file->storage_path),
                     'file_type' => $file->file_type ?: $this->getFileType($file->original_name),
                     'file_size' => $this->formatFileSize($file->file_size),
                     'owner' => $file->user->name,
@@ -848,15 +848,12 @@ EOT;
     }
 
     /**
-     * Check if a file is a system document (from public/documents).
+     * Check if a file is a system document (from migrated system docs).
      */
     private function isSystemDocument(string $filename): bool
     {
-        // Check if the file exists in the public/documents directory or any subdirectory
-        $documentsPath = public_path('documents');
-        
-        // Search recursively for the file
-        return $this->fileExistsInDirectory($documentsPath, $filename);
+        // System documents are stored in the 'migrated' directory
+        return str_starts_with($filename, 'migrated/');
     }
 
     /**
