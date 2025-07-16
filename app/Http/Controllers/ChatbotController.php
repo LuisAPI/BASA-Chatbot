@@ -853,8 +853,7 @@ EOT;
      */
     private function isSystemDocument(string $filename): bool
     {
-        // System documents are stored in the documents directory
-        return str_starts_with($filename, 'documents/');
+        return str_starts_with($filename, config('systemdocs.path_prefix'));
     }
 
     /**

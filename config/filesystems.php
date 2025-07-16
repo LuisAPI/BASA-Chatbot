@@ -38,6 +38,15 @@ return [
             'report' => false,
         ],
 
+        'systemdocs' => [
+            'driver' => 'local',
+            'root' => storage_path('app/systemdocs'),
+            'url' => env('APP_URL').'/systemdocs',
+            'visibility' => 'public',
+            'throw' => false,
+            'report' => false,
+        ],
+
         'public' => [
             'driver' => 'local',
             'root' => storage_path('app/public'),

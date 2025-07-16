@@ -97,8 +97,8 @@ class MigrateToUserBasedFiles extends Command
 
     private function isSystemDocument(string $filename): bool
     {
-        $documentsPath = public_path('documents');
-        return $this->fileExistsInDirectory($documentsPath, $filename);
+        $storage = \Illuminate\Support\Facades\Storage::disk(config('systemdocs.storage_disk'));
+        return $storage->exists(config('systemdocs.path_prefix').$filename);
     }
 
     private function fileExistsInDirectory(string $directory, string $filename): bool
