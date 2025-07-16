@@ -614,7 +614,9 @@ EOT;
                 ->select('source')
                 ->distinct()
                 ->whereNotIn('source', function($query) {
-                    $query->select('original_name')->from('user_files');
+                    $query->select('original_name')
+                        ->from('user_files')
+                        ->whereColumn('user_files.user_id', 'rag_chunks.user_id');
                 })
                 ->get()
                 ->map(function ($file) {
@@ -629,7 +631,8 @@ EOT;
                         'is_system_document' => true,
                         'file_type' => $this->getFileType($file->source),
                         'file_size' => $this->getFileSize($file->source),
-                        'owner' => 'System',
+                        'owner' => 'DEPDev System',
+                        'user_id' => 0,  // System user ID
                         'is_owner' => false,
                         'is_public' => true,
                         'shared_with' => []
@@ -702,7 +705,7 @@ EOT;
                 ->merge($sharedFilesArray)
                 ->merge($publicFilesArray)
                 ->merge($systemFiles)
-                ->unique('id');
+                ->unique('name');  // Use filename as unique key since system files don't have DB IDs
             
             return response()->json([
                 'files' => $allFilesArray,
