@@ -107,7 +107,7 @@ class ChatbotController extends Controller
         
         // Create user-specific storage path
         $userId = Auth::id();
-        $storagePath = $file->storeAs("uploads/user_{$userId}", uniqid() . '_' . $fileName, 'local');
+        $storagePath = $file->storeAs("private/uploads/user_{$userId}", uniqid() . '_' . $fileName, 'local');
         
         if (!$storagePath) {
             return response()->json(['reply' => 'Failed to save uploaded file.'], 500);
