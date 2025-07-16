@@ -41,7 +41,7 @@ class ProcessFileForRAG implements ShouldQueue
                 $fullPath = public_path($this->filePath);
             } else {
                 // File is in private storage (user uploads)
-                $fullPath = storage_path('app/private/' . $this->filePath);
+                $fullPath = storage_path('app/' . $this->filePath);
             }
             if (in_array($ext, ['txt', 'csv', 'rtf', 'odt'])) {
                 $content = file_get_contents($fullPath);
