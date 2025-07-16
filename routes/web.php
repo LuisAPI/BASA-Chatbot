@@ -25,7 +25,7 @@ Route::middleware('auth')->group(function () {
     Route::post('/chatbot/upload', [ChatbotController::class, 'upload'])->name('chatbot.upload');
     Route::post('/chatbot/stream', [ChatbotController::class, 'streamLLM'])->name('chatbot.stream');
     Route::get('/chatbot/streaming-enabled', [ChatbotController::class, 'streamingEnabled'])->name('chatbot.streaming-enabled');
-    Route::post('/chatbot/processing-status', [ChatbotController::class, 'processingStatus'])->name('chatbot.processing-status');
+    Route::match(['get', 'post'], '/chatbot/processing-status', [ChatbotController::class, 'processingStatus']);
     Route::get('/chatbot/rag-info', [ChatbotController::class, 'getRagInfo'])->name('chatbot.rag-info');
     Route::get('/chatbot/available-files', [ChatbotController::class, 'getAvailableFiles'])->name('chatbot.available-files');
     Route::get('/chatbot/files', [ChatbotController::class, 'fileGallery'])->name('chatbot.files');
