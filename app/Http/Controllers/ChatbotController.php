@@ -637,12 +637,16 @@ EOT;
                     $query->select('original_name')->from('user_files');
                 })
                 ->whereNull('user_id')
-                ->where('source', 'like', 'documents/%')  // Explicitly filter documents path
+                ->where('source', 'like', config('systemdocs.path_prefix') . '%')
                 ->get()
                 ->map(function ($file) {
                     $chunkCount = \Illuminate\Support\Facades\DB::table('rag_chunks')
                         ->where('source', $file->source)
                         ->count();
+
+                    // Verify the file actually exists in systemdocs storage
+                    $exists = \Illuminate\Support\Facades\Storage::disk('systemdocs')
+                        ->exists(str_replace(config('systemdocs.path_prefix'), '', $file->source));
                     
                     return [
                         'id' => 'system_' . md5($file->source), // Generate a unique ID for system files
@@ -656,7 +660,8 @@ EOT;
                         'is_owner' => true,  // Accessible to all users
                         'is_owner' => false,
                         'is_public' => true,
-                        'shared_with' => []
+                        'shared_with' => [],
+                        'file_exists' => $exists
                     ];
                 });
             
