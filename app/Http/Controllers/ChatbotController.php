@@ -596,6 +596,7 @@ EOT;
             // Get user's own files
             $userFiles = UserFile::where('user_id', $userId)
                 ->where('processing_status', 'completed')
+                ->whereNotNull('processed_at')
                 ->get();
             
             // Get files shared with this user
@@ -639,6 +640,9 @@ EOT;
             $userFilesArray = $userFiles->map(function ($file) {
                 $chunkCount = RagChunk::where('source', $file->original_name)
                     ->where('user_id', $file->user_id)
+                    ->whereHas('userFile', function($query) use ($file) {
+                        $query->where('id', $file->id);
+                    })
                     ->count();
                 
                 return [
