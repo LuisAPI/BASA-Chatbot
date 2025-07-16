@@ -642,6 +642,7 @@ EOT;
                 ->map(function ($file) {
                     $chunkCount = \Illuminate\Support\Facades\DB::table('rag_chunks')
                         ->where('source', $file->source)
+                        ->where('user_file_id', $file->id)
                         ->count();
 
                     // Verify the file actually exists in systemdocs storage
