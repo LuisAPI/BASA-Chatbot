@@ -636,7 +636,8 @@ EOT;
                 ->whereNotIn('source', function($query) {
                     $query->select('original_name')->from('user_files');
                 })
-                ->whereNull('user_id')  // System files have no user association
+                ->whereNull('user_id')
+                ->where('source', 'like', 'documents/%')  // Explicitly filter documents path
                 ->get()
                 ->map(function ($file) {
                     $chunkCount = \Illuminate\Support\Facades\DB::table('rag_chunks')
@@ -852,8 +853,8 @@ EOT;
      */
     private function isSystemDocument(string $filename): bool
     {
-        // System documents are stored in the public/documents directory
-        return str_starts_with($filename, 'public/documents/');
+        // System documents are stored in the documents directory
+        return str_starts_with($filename, 'documents/');
     }
 
     /**
