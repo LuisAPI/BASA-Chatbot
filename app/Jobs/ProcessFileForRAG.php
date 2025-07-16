@@ -107,7 +107,11 @@ class ProcessFileForRAG implements ShouldQueue
             if ($this->userId) {
                 \App\Models\UserFile::where('user_id', $this->userId)
                     ->where('original_name', $this->fileName)
-                    ->update(['processing_status' => 'completed']);
+                    ->where('storage_path', $this->filePath) // Ensure exact match
+                    ->update([
+                        'processing_status' => 'completed',
+                        'processed_at' => now()
+                    ]);
             }
             
             // Log the successful processing
