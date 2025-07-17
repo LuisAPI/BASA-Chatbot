@@ -89,35 +89,42 @@ class ReprocessRagFiles extends Command
      */
     private function getFilesToReprocess(): array
     {
+        $dbFiles = DB::table('rag_chunks')
+            ->distinct()
+            ->pluck('source')
+            ->toArray();
+
+        $storagePath = storage_path('app/private/uploads');
+        $allFiles = [];
+        if (is_dir($storagePath)) {
+            $rii = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($storagePath, \FilesystemIterator::SKIP_DOTS));
+            foreach ($rii as $file) {
+                if ($file->isFile()) {
+                    $allFiles[] = $file->getFilename();
+                }
+            }
+        }
+
         if ($this->option('file')) {
             $fileName = $this->option('file');
-            $files = DB::table('rag_chunks')
-                ->where('source', $fileName)
-                ->distinct()
-                ->pluck('source')
-                ->toArray();
-            
-            if (empty($files)) {
-                $this->warn("No chunks found for file: {$fileName}");
-            }
-            
-            return $files;
+            // Only process if present in storage
+            return in_array($fileName, $allFiles) ? [$fileName] : [];
         }
 
         if ($this->option('all')) {
-            return DB::table('rag_chunks')
-                ->distinct()
-                ->pluck('source')
-                ->toArray();
+            // Union of files in storage and DB
+            return array_unique(array_merge($allFiles, $dbFiles));
         }
 
-        // Default: reprocess files with more than 10 chunks (likely need optimization)
-        return DB::table('rag_chunks')
+        // Default: files with >10 chunks OR files in storage not in DB
+        $filesWithManyChunks = DB::table('rag_chunks')
             ->select('source')
             ->groupBy('source')
             ->havingRaw('COUNT(*) > 10')
             ->pluck('source')
             ->toArray();
+        $newFiles = array_diff($allFiles, $dbFiles);
+        return array_unique(array_merge($filesWithManyChunks, $newFiles));
     }
 
     /**
