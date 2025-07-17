@@ -156,8 +156,11 @@ class ReprocessRagFiles extends Command
 
         foreach ($iterator as $file) {
             if ($file->isFile() && $file->getFilename() === $fileName) {
-                // Return relative path from 'storage/app'
-                return str_replace(storage_path('app/') . DIRECTORY_SEPARATOR, '', $file->getRealPath());
+                // Get the path relative to storage/app
+                $fullPath = $file->getRealPath();
+                $storageAppPath = storage_path('app');
+                $relativePath = ltrim(str_replace(['\\', $storageAppPath], ['/', ''], $fullPath), '/');
+                return $relativePath;
             }
         }
 
