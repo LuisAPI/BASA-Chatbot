@@ -75,36 +75,56 @@ class FixPdfParsingErrors extends Command
             
             foreach ($filesWithErrors as $file) {
                 $fileName = $file->source;
-                
                 try {
                     // Step 1: Delete existing chunks for this file
                     $deletedChunks = DB::table('rag_chunks')
                         ->where('source', $fileName)
                         ->delete();
-                    
-                    // Step 2: Find the actual file in storage
-                    $storageFiles = glob(storage_path('app/private/uploads/*' . $fileName));
-                    
-                    if (empty($storageFiles)) {
+
+                    // Step 2: Find the actual file in storage (recursive search)
+                    $basePath = storage_path('app/private/uploads');
+                    $foundPath = null;
+                    $rii = new \RecursiveIteratorIterator(
+                        new \RecursiveDirectoryIterator($basePath, \FilesystemIterator::SKIP_DOTS),
+                        \RecursiveIteratorIterator::SELF_FIRST
+                    );
+                    foreach ($rii as $f) {
+                        if ($f->isFile() && $f->getFilename() === $fileName) {
+                            $foundPath = $f->getRealPath();
+                            break;
+                        }
+                    }
+
+                    if (!$foundPath) {
                         $this->error("File not found in storage: " . $fileName);
                         $errorCount++;
                         $progressBar->advance();
                         continue;
                     }
-                    
-                    $actualFilePath = $storageFiles[0];
-                    $relativePath = str_replace(storage_path('app/private/'), '', $actualFilePath);
-                    
-                    // Step 3: Dispatch the job with correct path
-                    ProcessFileForRAG::dispatch($relativePath, $fileName);
-                    
-                    $fixedCount++;
-                    
+
+                    // Normalize slashes
+                    $normalizedPath = str_replace('\\', '/', $foundPath);
+                    // Strip everything before and including 'storage/app/'
+                    $needle = '/storage/app/';
+                    $pos = strpos($normalizedPath, $needle);
+                    if ($pos !== false) {
+                        $relativePath = substr($normalizedPath, $pos + strlen($needle));
+                        // Ensure it starts with private/uploads/
+                        if (strpos($relativePath, 'private/uploads/') === 0) {
+                            ProcessFileForRAG::dispatch($relativePath, $fileName);
+                            $fixedCount++;
+                        } else {
+                            $this->error("Relative path incorrect for: " . $fileName . " (got: $relativePath)");
+                            $errorCount++;
+                        }
+                    } else {
+                        $this->error("Could not find storage/app/ in path for: " . $fileName . " (got: $normalizedPath)");
+                        $errorCount++;
+                    }
                 } catch (\Exception $e) {
                     $this->error("Error processing {$fileName}: " . $e->getMessage());
                     $errorCount++;
                 }
-                
                 $progressBar->advance();
             }
             
@@ -163,36 +183,56 @@ class FixPdfParsingErrors extends Command
         
         foreach ($processedFiles as $file) {
             $fileName = $file->source;
-            
             try {
                 // Step 1: Delete existing chunks for this file
                 $deletedChunks = DB::table('rag_chunks')
                     ->where('source', $fileName)
                     ->delete();
-                
-                // Step 2: Find the actual file in storage
-                $storageFiles = glob(storage_path('app/private/uploads/*' . $fileName));
-                
-                if (empty($storageFiles)) {
+
+                // Step 2: Find the actual file in storage (recursive search)
+                $basePath = storage_path('app/private/uploads');
+                $foundPath = null;
+                $rii = new \RecursiveIteratorIterator(
+                    new \RecursiveDirectoryIterator($basePath, \FilesystemIterator::SKIP_DOTS),
+                    \RecursiveIteratorIterator::SELF_FIRST
+                );
+                foreach ($rii as $f) {
+                    if ($f->isFile() && $f->getFilename() === $fileName) {
+                        $foundPath = $f->getRealPath();
+                        break;
+                    }
+                }
+
+                if (!$foundPath) {
                     $this->error("File not found in storage: " . $fileName);
                     $errorCount++;
                     $progressBar->advance();
                     continue;
                 }
-                
-                $actualFilePath = $storageFiles[0];
-                $relativePath = str_replace(storage_path('app/private/'), '', $actualFilePath);
-                
-                // Step 3: Dispatch the job with correct path
-                ProcessFileForRAG::dispatch($relativePath, $fileName);
-                
-                $reprocessedCount++;
-                
+
+                // Normalize slashes
+                $normalizedPath = str_replace('\\', '/', $foundPath);
+                // Strip everything before and including 'storage/app/'
+                $needle = '/storage/app/';
+                $pos = strpos($normalizedPath, $needle);
+                if ($pos !== false) {
+                    $relativePath = substr($normalizedPath, $pos + strlen($needle));
+                    // Ensure it starts with private/uploads/
+                    if (strpos($relativePath, 'private/uploads/') === 0) {
+                        ProcessFileForRAG::dispatch($relativePath, $fileName);
+                        $reprocessedCount++;
+                    } else {
+                        $this->error("Relative path incorrect for: " . $fileName . " (got: $relativePath)");
+                        $errorCount++;
+                    }
+                } else {
+                    $this->error("Could not find storage/app/ in path for: " . $fileName . " (got: $normalizedPath)");
+                    $errorCount++;
+                }
             } catch (\Exception $e) {
                 $this->error("Error reprocessing {$fileName}: " . $e->getMessage());
                 $errorCount++;
             }
-            
             $progressBar->advance();
         }
         
