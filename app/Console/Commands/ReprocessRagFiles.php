@@ -33,7 +33,7 @@ class ReprocessRagFiles extends Command
     {
         $this->info('Starting RAG file reprocessing...');
 
-        // Get files to reprocess
+        // Get files to reprocess (now returns array of ['filename', 'relativePath'])
         $files = $this->getFilesToReprocess();
 
         if (empty($files)) {
@@ -44,29 +44,28 @@ class ReprocessRagFiles extends Command
         if ($this->option('dry-run')) {
             $this->info('DRY RUN - Files that would be reprocessed:');
             foreach ($files as $file) {
-                $this->line("- {$file}");
+                $this->line("- {$file['relativePath']}");
             }
             return;
         }
 
         $this->info("Found " . count($files) . " files to reprocess.");
 
-        // Clear existing chunks for these files
-        $this->clearExistingChunks($files);
+        // Clear existing chunks for these files (by filename)
+        $this->clearExistingChunks(array_map(fn($f) => $f['filename'], $files));
 
         // Reprocess files
         $bar = $this->output->createProgressBar(count($files));
         $bar->start();
 
-        foreach ($files as $fileName) {
+        foreach ($files as $file) {
+            $fileName = $file['filename'];
+            $storagePath = $file['relativePath'];
             try {
-                // Find the storage path for this file
-                $storagePath = $this->findStoragePath($fileName);
-                
                 if ($storagePath) {
                     // Dispatch job to reprocess
                     ProcessFileForRAG::dispatch($storagePath, $fileName);
-                    $this->line("\nQueued: {$fileName}");
+                    $this->line("\nQueued: {$fileName} ({$storagePath})");
                 } else {
                     $this->warn("\nStorage path not found for: {$fileName}");
                 }
@@ -74,7 +73,6 @@ class ReprocessRagFiles extends Command
                 $this->error("\nError processing {$fileName}: " . $e->getMessage());
                 Log::error("Error reprocessing file {$fileName}: " . $e->getMessage());
             }
-            
             $bar->advance();
         }
 
@@ -89,35 +87,70 @@ class ReprocessRagFiles extends Command
      */
     private function getFilesToReprocess(): array
     {
+        $dbFiles = DB::table('rag_chunks')
+            ->distinct()
+            ->pluck('source')
+            ->toArray();
+
+        $storagePath = storage_path('app/private/uploads');
+        $allFiles = [];
+        if (is_dir($storagePath)) {
+            $rii = new \RecursiveIteratorIterator(
+                new \RecursiveDirectoryIterator($storagePath, \FilesystemIterator::SKIP_DOTS),
+                \RecursiveIteratorIterator::SELF_FIRST
+            );
+            foreach ($rii as $file) {
+                if ($file->isFile()) {
+                    // Store relative path from storage/app
+                    $fullPath = $file->getRealPath();
+                    $storageAppPath = storage_path('app');
+                    $relativePath = ltrim(str_replace(['\\', $storageAppPath], ['/', ''], $fullPath), '/');
+                    $allFiles[] = [
+                        'filename' => $file->getFilename(),
+                        'relativePath' => $relativePath
+                    ];
+                }
+            }
+        }
+
         if ($this->option('file')) {
             $fileName = $this->option('file');
-            $files = DB::table('rag_chunks')
-                ->where('source', $fileName)
-                ->distinct()
-                ->pluck('source')
-                ->toArray();
-            
-            if (empty($files)) {
-                $this->warn("No chunks found for file: {$fileName}");
-            }
-            
-            return $files;
+            $found = array_filter($allFiles, fn($f) => $f['filename'] === $fileName);
+            return array_values($found);
         }
 
         if ($this->option('all')) {
-            return DB::table('rag_chunks')
-                ->distinct()
-                ->pluck('source')
-                ->toArray();
+            // Union of files in storage and DB
+            // Only files physically present in storage
+            return array_values($allFiles);
         }
 
-        // Default: reprocess files with more than 10 chunks (likely need optimization)
-        return DB::table('rag_chunks')
+        // Default: files with >10 chunks OR files in storage not in DB
+        $filesWithManyChunks = DB::table('rag_chunks')
             ->select('source')
             ->groupBy('source')
             ->havingRaw('COUNT(*) > 10')
             ->pluck('source')
             ->toArray();
+        $storageFileNames = array_map(fn($f) => $f['filename'], $allFiles);
+        $newFiles = array_filter($allFiles, fn($f) => !in_array($f['filename'], $dbFiles));
+        $result = [];
+        // Add files with >10 chunks (by filename)
+        foreach ($allFiles as $f) {
+            if (in_array($f['filename'], $filesWithManyChunks)) {
+                $result[] = $f;
+            }
+        }
+        // Add new files not in DB
+        foreach ($newFiles as $f) {
+            $result[] = $f;
+        }
+        // Remove duplicates by relativePath
+        $unique = [];
+        foreach ($result as $f) {
+            $unique[$f['relativePath']] = $f;
+        }
+        return array_values($unique);
     }
 
     /**
@@ -139,17 +172,7 @@ class ReprocessRagFiles extends Command
      */
     private function findStoragePath(string $fileName): ?string
     {
-        // This is a simplified approach - in a real implementation,
-        // you might want to store the storage path in the database
-        // or have a more sophisticated file tracking system
-        
-        $storage = storage_path('app/uploads');
-        $files = glob($storage . '/*' . $fileName);
-        
-        if (!empty($files)) {
-            return str_replace(storage_path('app/'), '', $files[0]);
-        }
-        
+        // No longer needed: getFilesToReprocess returns relativePath directly
         return null;
     }
 } 
