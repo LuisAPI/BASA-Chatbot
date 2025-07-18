@@ -17,10 +17,6 @@ return new class extends Migration {
             $table->string('title')->nullable();
             $table->timestamps();
         });
-        Schema::table('webpage_chunks', function (Blueprint $table) {
-            $table->unsignedBigInteger('webpages_id')->nullable()->after('webpage_id');
-            $table->foreign('webpages_id')->references('id')->on('webpages')->onDelete('cascade');
-        });
     }
 
     /**
@@ -28,10 +24,6 @@ return new class extends Migration {
      */
     public function down(): void
     {
-        Schema::table('webpage_chunks', function (Blueprint $table) {
-            $table->dropForeign(['webpages_id']);
-            $table->dropColumn('webpages_id');
-        });
         Schema::dropIfExists('webpages');
     }
 };
