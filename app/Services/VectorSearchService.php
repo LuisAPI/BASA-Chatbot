@@ -7,17 +7,32 @@ use Illuminate\Support\Facades\DB;
 class VectorSearchService
 {
     /**
-     * Store a chunk and its embedding in the database.
+     * Store a chunk and its embedding in the appropriate database table.
+     *
+     * For files: $type = 'file', $source = filename
+     * For webpages: $type = 'webpage', $source = webpages_id (int)
      */
-    public function storeChunk(string $source, string $chunk, array $embedding)
+    public function storeChunk(string $type = 'file', $source, string $chunk, array $embedding)
     {
-        DB::table('rag_chunks')->insert([
-            'source' => $source,
-            'chunk' => $chunk,
-            'embedding' => json_encode($embedding),
-            'created_at' => now(),
-            'updated_at' => now(),
-        ]);
+        if ($type === 'file') {
+            DB::table('rag_chunks')->insert([
+                'source' => $source,
+                'chunk' => $chunk,
+                'embedding' => json_encode($embedding),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        } elseif ($type === 'webpage') {
+            DB::table('webpage_chunks')->insert([
+                'webpages_id' => $source,
+                'chunk' => $chunk,
+                'embedding' => json_encode($embedding),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        } else {
+            throw new \InvalidArgumentException('Unknown chunk type for storage: ' . $type);
+        }
     }
 
     /**

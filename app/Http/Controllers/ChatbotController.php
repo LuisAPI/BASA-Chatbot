@@ -47,7 +47,8 @@ class ChatbotController extends Controller
         // Check if the user message contains a URL (with or without a question)
         $url = null;
         $question = null;
-        if (preg_match('/(https?:\/\/[^\s]+)/i', $userMessage, $matches)) {
+        $webpageContext = '';
+        if (preg_match('/(https?:\/\/[\S]+)/i', $userMessage, $matches)) {
             $url = $matches[1];
             $question = trim(str_replace($url, '', $userMessage));
             if (empty($question)) {
@@ -57,7 +58,12 @@ class ChatbotController extends Controller
             if (isset($webResult['error'])) {
                 return response()->json(['reply' => $webResult['error']]);
             }
-            $userMessage = $question . " Title: {$webResult['title']}. Content: {$webResult['content']}";
+            // Cache and chunk webpage
+            $webpageId = $this->cacheAndChunkWebpage($url, $webResult['title'], $webResult['content']);
+            // Vector search for relevant webpage chunks
+            $relevantWebChunks = $this->searchRelevantWebpageChunks($question, $webpageId);
+            $webpageContext = $this->buildWebpageContext($relevantWebChunks, $webResult['title'], $url);
+            $userMessage = $question;
         }
 
         // Only perform RAG search if files are explicitly selected
@@ -65,14 +71,27 @@ class ChatbotController extends Controller
         if (!empty($selectedFiles)) {
             $relevantContent = $this->searchRelevantFileContent($userMessage, $selectedFiles);
         }
-        
-        $botReply = $this->sendToLLM($userMessage, null, $relevantContent);
-        
+
+        // Build final context for LLM
+        $finalContext = '';
+        if (!empty($webpageContext)) {
+            $finalContext .= $webpageContext . "\n\n";
+        }
+        if (!empty($relevantContent)) {
+            $finalContext .= $this->buildFileContext(array_slice($relevantContent, 0, 2)) . "\n\n";
+        }
+        if (!empty($finalContext)) {
+            $userMessage = "IMPORTANT: Use ONLY the following content to answer. If the answer is not present, say 'I don't know.'\n\n" . $finalContext . "QUESTION: " . $userMessage;
+        }
+
+        $botReply = $this->sendToLLM($userMessage, null, []);
+
         return response()->json([
             'reply' => $botReply,
             'rag_used' => !empty($relevantContent),
             'rag_chunks_found' => count($relevantContent),
             'rag_files' => !empty($relevantContent) ? array_unique(array_column($relevantContent, 'source')) : [],
+            'web_chunks_used' => !empty($webpageContext),
             'debug_enabled' => config('app.debug', false)
         ]);
     }
@@ -715,41 +734,55 @@ EOT;
      */
     private function fetchAndParseWebpage(string $url): ?array
     {
-        $parsedUrl = parse_url($url);
-        $robotsUrl = $parsedUrl['scheme'] . '://' . $parsedUrl['host'] . '/robots.txt';
         try {
-            $robotsResponse = \Illuminate\Support\Facades\Http::timeout(5)->get($robotsUrl);
-            $robotsTxt = $robotsResponse->successful() ? $robotsResponse->body() : '';
-            $isAllowed = true;
-            if ($robotsTxt) {
-                $lines = preg_split('/\r?\n/', $robotsTxt);
-                $userAgent = false;
-                foreach ($lines as $line) {
-                    $line = trim($line);
-                    if (stripos($line, 'User-agent:') === 0) {
-                        $userAgent = (stripos($line, 'User-agent: *') === 0);
-                    } elseif ($userAgent && stripos($line, 'Disallow:') === 0) {
-                        $disallowedPath = trim(substr($line, 9));
-                        if ($disallowedPath && strpos($parsedUrl['path'] ?? '/', $disallowedPath) === 0) {
-                            $isAllowed = false;
-                            break;
-                        }
-                    } elseif (stripos($line, 'User-agent:') === 0) {
-                        $userAgent = false;
-                    }
-                }
-            }
-            if (!$isAllowed) {
-                return ['error' => 'Sorry, I am not allowed to access this page due to the site\'s robots.txt rules.'];
-            }
-        } catch (\Exception $e) {
-            // If robots.txt fails, proceed (fail open)
-        }
-        try {
-            $webResponse = \Illuminate\Support\Facades\Http::timeout(10)
-                ->withHeaders(['User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'])
-                ->get($url);
-            $html = $webResponse->body();
+            // Enhanced Browsershot arguments and headers for anti-bot evasion
+            $userAgents = [
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114 Safari/537.36',
+                'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.1 Safari/605.1.15',
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0',
+                'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36',
+            ];
+            $userAgent = $userAgents[array_rand($userAgents)];
+            $viewportSizes = [
+                [1920, 1080],
+                [1366, 768],
+                [1536, 864],
+                [1280, 800],
+            ];
+            $viewport = $viewportSizes[array_rand($viewportSizes)];
+            $headers = [
+                'Accept-Language' => 'en-US,en;q=0.9',
+                'Accept-Encoding' => 'gzip, deflate, br',
+                'Referer' => 'https://www.google.com/',
+                'DNT' => '1',
+            ];
+            $args = [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-gpu',
+                '--disable-blink-features=AutomationControlled',
+                '--disable-automation',
+                '--disable-infobars',
+                '--disable-web-security',
+                '--disable-features=IsolateOrigins,site-per-process',
+                '--window-size=' . $viewport[0] . ',' . $viewport[1],
+                '--lang=en-US',
+                '--start-maximized',
+                '--hide-scrollbars',
+                '--disable-extensions',
+                '--user-agent=' . $userAgent,
+            ];
+            $html = \Spatie\Browsershot\Browsershot::url($url)
+                ->setChromePath(env('CHROME_PATH', 'C:\Program Files\Google\Chrome\Application\chrome.exe'))
+                ->setOption('args', $args)
+                ->setOption('waitUntil', env('BROWSERSHOT_WAIT_UNTIL', 'networkidle0'))
+                ->setOption('headers', $headers)
+                ->setViewport($viewport[0], $viewport[1])
+                ->timeout(env('BROWSERSHOT_TIMEOUT', 60))
+                ->bodyHtml();
+
+            // Use Readability to parse the HTML
             $readability = new \fivefilters\Readability\Readability(new \fivefilters\Readability\Configuration());
             $readability->parse($html);
             $content = $readability->getContent();
@@ -834,6 +867,102 @@ EOT;
         
         $context .= "CRITICAL INSTRUCTION: When answering questions, ALWAYS prioritize and use the information above from the user's uploaded files as your primary source. Only fall back to your general knowledge about DEPDev if the question is completely unrelated to the uploaded content. Always cite which file the information comes from when possible.\n\n";
         
+        return $context;
+    }
+
+    /**
+     * Search for relevant chunks of a cached webpage using vector similarity.
+     */
+    private function searchRelevantWebpageChunks(string $userMessage, string $webpageId): array
+    {
+        try {
+            $embeddingService = new \App\Services\EmbeddingService();
+            $vectorSearch = new \App\Services\VectorSearchService();
+            
+            // Generate embedding for user message
+            $queryEmbedding = $embeddingService->getEmbedding($userMessage);
+            
+            if (!$queryEmbedding) {
+                \Illuminate\Support\Facades\Log::warning('Failed to generate embedding for user message');
+                return [];
+            }
+            
+            // Search for similar chunks within the specific webpage
+            $similarChunks = $vectorSearch->searchSimilar($queryEmbedding, 5, [$webpageId]); // Get top 5 most relevant chunks
+            
+            // Filter out low similarity results (threshold of 0.3)
+            $relevantChunks = array_filter($similarChunks, function($chunk) {
+                return $chunk['similarity'] > 0.3;
+            });
+            
+            \Illuminate\Support\Facades\Log::info('Webpage RAG Search - Query: "' . $userMessage . '", Found: ' . count($relevantChunks) . ' relevant chunks for webpage ID ' . $webpageId);
+            
+            return $relevantChunks;
+            
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('Error searching for relevant webpage chunks: ' . $e->getMessage());
+            return [];
+        }
+    }
+
+    /**
+     * Cache and chunk a webpage's content for later retrieval using the webpage_chunks table.
+     */
+    private function cacheAndChunkWebpage(string $url, string $title, string $content): ?string
+    {
+        try {
+            // Generate a unique ID for the webpage based on its URL
+            $webpageId = md5($url);
+
+            // Check if the webpage is already cached
+            $existingCache = \Illuminate\Support\Facades\DB::table('webpage_chunks')
+                ->where('webpage_id', $webpageId)
+                ->first();
+
+            if ($existingCache) {
+                // Webpage is already cached, no need to re-cache
+                return $webpageId;
+            }
+
+            // Use the existing Chunker service for chunking
+            $chunker = new \App\Services\Chunker();
+            $chunks = $chunker->chunkText($content);
+
+            // Insert the chunks into the new webpage_chunks table
+            foreach ($chunks as $chunk) {
+                \Illuminate\Support\Facades\DB::table('webpage_chunks')->insert([
+                    'webpage_id' => $webpageId,
+                    'url' => $url,
+                    'title' => $title,
+                    'chunk' => $chunk,
+                    'created_at' => now(),
+                    'updated_at' => now()
+                ]);
+            }
+
+            return $webpageId;
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('Error caching webpage: ' . $e->getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Build context from relevant webpage chunks for the LLM prompt.
+     */
+    private function buildWebpageContext(array $relevantChunks, string $title, string $url): string
+    {
+        if (empty($relevantChunks)) {
+            return '';
+        }
+        $context = "IMPORTANT: The following information comes from a webpage. Use this information as your primary source when answering questions:\n\n";
+        $context .= "Page Title: {$title}\n";
+        $context .= "URL: {$url}\n\n";
+        foreach ($relevantChunks as $index => $chunk) {
+            $context .= "--- Content chunk (relevance: " . round($chunk['similarity'], 3) . ") ---\n";
+            $context .= $chunk['chunk'] . "\n\n";
+        }
+        $context .= "CRITICAL INSTRUCTION: When answering questions, ALWAYS prioritize and use the information above from the webpage as your primary source. Only fall back to your general knowledge about DEPDev if the question is completely unrelated to the webpage content. Always cite the webpage title and URL when possible.\n\n";
         return $context;
     }
 }
