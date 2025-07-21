@@ -10,6 +10,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use App\Jobs\ProcessFileForRAG;
+use App\Jobs\ProcessWebpageForRAG;
 
 class ChatbotController extends Controller
 {
@@ -48,22 +49,21 @@ class ChatbotController extends Controller
         $url = null;
         $question = null;
         $webpageContext = '';
-        if (preg_match('/(https?:\/\/[\S]+)/i', $userMessage, $matches)) {
-            $url = $matches[1];
-            $question = trim(str_replace($url, '', $userMessage));
+        // Improved URL regex: match until whitespace or end, exclude trailing punctuation
+        if (preg_match('/(https?:\/\/[\w\-\.\/?#=&;%:~+@!$\*\(\),]+)(?=\s|$|[.?!,;:])/i', $userMessage, $matches)) {
+            $url = rtrim($matches[1], '.?!,;:');
+            $question = trim(str_replace($matches[0], '', $userMessage));
             if (empty($question)) {
                 $question = 'Summarize the following webpage.';
             }
-            $webResult = $this->fetchAndParseWebpage($url);
-            if (isset($webResult['error'])) {
-                return response()->json(['reply' => $webResult['error']]);
-            }
-            // Cache and chunk webpage
-            $webpageId = $this->cacheAndChunkWebpage($url, $webResult['title'], $webResult['content']);
-            // Vector search for relevant webpage chunks
-            $relevantWebChunks = $this->searchRelevantWebpageChunks($question, $webpageId);
-            $webpageContext = $this->buildWebpageContext($relevantWebChunks, $webResult['title'], $url);
-            $userMessage = $question;
+            // Dispatch background job for parsing, chunking, embedding
+            // We'll optimistically return a message to the user and skip immediate chunk search
+            ProcessWebpageForRAG::dispatch($url, null, null);
+            return response()->json([
+                'reply' => 'Webpage is being processed. You will be notified when it is ready.',
+                'web_chunks_used' => false,
+                'debug_enabled' => config('app.debug', false)
+            ]);
         }
 
         // Only perform RAG search if files are explicitly selected
@@ -730,77 +730,6 @@ EOT;
     }
 
     /**
-     * Fetch and parse a webpage, respecting robots.txt and returning extracted content.
-     */
-    private function fetchAndParseWebpage(string $url): ?array
-    {
-        try {
-            // Enhanced Browsershot arguments and headers for anti-bot evasion
-            $userAgents = [
-                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114 Safari/537.36',
-                'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.1 Safari/605.1.15',
-                'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0',
-                'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36',
-            ];
-            $userAgent = $userAgents[array_rand($userAgents)];
-            $viewportSizes = [
-                [1920, 1080],
-                [1366, 768],
-                [1536, 864],
-                [1280, 800],
-            ];
-            $viewport = $viewportSizes[array_rand($viewportSizes)];
-            $headers = [
-                'Accept-Language' => 'en-US,en;q=0.9',
-                'Accept-Encoding' => 'gzip, deflate, br',
-                'Referer' => 'https://www.google.com/',
-                'DNT' => '1',
-            ];
-            $args = [
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage',
-                '--disable-gpu',
-                '--disable-blink-features=AutomationControlled',
-                '--disable-automation',
-                '--disable-infobars',
-                '--disable-web-security',
-                '--disable-features=IsolateOrigins,site-per-process',
-                '--window-size=' . $viewport[0] . ',' . $viewport[1],
-                '--lang=en-US',
-                '--start-maximized',
-                '--hide-scrollbars',
-                '--disable-extensions',
-                '--user-agent=' . $userAgent,
-            ];
-            $html = \Spatie\Browsershot\Browsershot::url($url)
-                ->setChromePath(env('CHROME_PATH', 'C:\Program Files\Google\Chrome\Application\chrome.exe'))
-                ->setOption('args', $args)
-                ->setOption('waitUntil', env('BROWSERSHOT_WAIT_UNTIL', 'networkidle0'))
-                ->setOption('headers', $headers)
-                ->setViewport($viewport[0], $viewport[1])
-                ->timeout(env('BROWSERSHOT_TIMEOUT', 60))
-                ->bodyHtml();
-
-            // Use Readability to parse the HTML
-            $readability = new \fivefilters\Readability\Readability(new \fivefilters\Readability\Configuration());
-            $readability->parse($html);
-            $content = $readability->getContent();
-            $title = $readability->getTitle();
-            $content = strip_tags($content);
-            if (strlen($content) > 4000) {
-                $content = substr($content, 0, 1000) . '... [truncated]';
-            }
-            return [
-                'title' => $title,
-                'content' => $content
-            ];
-        } catch (\Exception $e) {
-            return ['error' => 'Sorry, I could not fetch or process the webpage.'];
-        }
-    }
-
-    /**
      * Search for relevant content from uploaded files using vector similarity.
      * If $selectedFiles is provided, only search within those specific files.
      */
@@ -902,48 +831,6 @@ EOT;
         } catch (\Exception $e) {
             \Illuminate\Support\Facades\Log::error('Error searching for relevant webpage chunks: ' . $e->getMessage());
             return [];
-        }
-    }
-
-    /**
-     * Cache and chunk a webpage's content for later retrieval using the webpage_chunks table.
-     */
-    private function cacheAndChunkWebpage(string $url, string $title, string $content): ?string
-    {
-        try {
-            // Generate a unique ID for the webpage based on its URL
-            $webpageId = md5($url);
-
-            // Check if the webpage is already cached
-            $existingCache = \Illuminate\Support\Facades\DB::table('webpage_chunks')
-                ->where('webpage_id', $webpageId)
-                ->first();
-
-            if ($existingCache) {
-                // Webpage is already cached, no need to re-cache
-                return $webpageId;
-            }
-
-            // Use the existing Chunker service for chunking
-            $chunker = new \App\Services\Chunker();
-            $chunks = $chunker->chunkText($content);
-
-            // Insert the chunks into the new webpage_chunks table
-            foreach ($chunks as $chunk) {
-                \Illuminate\Support\Facades\DB::table('webpage_chunks')->insert([
-                    'webpage_id' => $webpageId,
-                    'url' => $url,
-                    'title' => $title,
-                    'chunk' => $chunk,
-                    'created_at' => now(),
-                    'updated_at' => now()
-                ]);
-            }
-
-            return $webpageId;
-        } catch (\Exception $e) {
-            \Illuminate\Support\Facades\Log::error('Error caching webpage: ' . $e->getMessage());
-            return null;
         }
     }
 
