@@ -56,8 +56,28 @@ class ChatbotController extends Controller
             if (empty($question)) {
                 $question = 'Summarize the following webpage.';
             }
-            // Dispatch background job for parsing, chunking, embedding
-            // We'll optimistically return a message to the user and skip immediate chunk search
+            // Check if webpage has already been processed (chunks exist)
+            $webpageId = md5($url);
+            $webpageRow = \Illuminate\Support\Facades\DB::table('webpages')->where('webpage_id', $webpageId)->first();
+            if ($webpageRow) {
+                // Get relevant chunks for this webpage
+                $relevantWebChunks = $this->searchRelevantWebpageChunks($question, $webpageId);
+                if (!empty($relevantWebChunks)) {
+                    $webpageContext = $this->buildWebpageContext(array_slice($relevantWebChunks, 0, 2), $webpageRow->title, $url);
+                    // Build final context for LLM
+                    $finalContext = $webpageContext;
+                    $userMessageForLLM = "IMPORTANT: Use ONLY the following content to answer. If the answer is not present, say 'I don't know.'\n\n" . $finalContext . "QUESTION: " . $question;
+                    $botReply = $this->sendToLLM($userMessageForLLM, null, []);
+                    return response()->json([
+                        'reply' => $botReply,
+                        'web_chunks_used' => true,
+                        'webpage_title' => $webpageRow->title,
+                        'webpage_url' => $url,
+                        'debug_enabled' => config('app.debug', false)
+                    ]);
+                }
+            }
+            // If not processed or no chunks, dispatch background job and return processing message
             ProcessWebpageForRAG::dispatch($url, null, null);
             return response()->json([
                 'reply' => 'Webpage is being processed. You will be notified when it is ready.',
@@ -316,7 +336,47 @@ EOT;
         $selectedFiles = $request->input('selected_files', []); // New: array of selected file names
         $systemPrompt = $this->getSystemPrompt();
         $model = env('LLM_MODEL', 'tinyllama');
-        
+
+        // --- Webpage RAG logic (mirrors ask()) ---
+        $url = null;
+        $question = null;
+        $webpageContext = '';
+        // Improved URL regex: match until whitespace or end, exclude trailing punctuation
+        if (preg_match('/(https?:\/\/[\w\-\.\/?#=&;%:~+@!$\*\(\),]+)(?=\s|$|[.?!,;:])/i', $prompt, $matches)) {
+            $url = rtrim($matches[1], '.?!,;:');
+            $question = trim(str_replace($matches[0], '', $prompt));
+            if (empty($question)) {
+                $question = 'Summarize the following webpage.';
+            }
+            // Check if webpage has already been processed (chunks exist)
+            $webpageId = md5($url);
+            $webpageRow = \Illuminate\Support\Facades\DB::table('webpages')->where('webpage_id', $webpageId)->first();
+            if ($webpageRow) {
+                // Get relevant chunks for this webpage
+                $relevantWebChunks = $this->searchRelevantWebpageChunks($question, $webpageId);
+                if (!empty($relevantWebChunks)) {
+                    $webpageContext = $this->buildWebpageContext(array_slice($relevantWebChunks, 0, 2), $webpageRow->title, $url);
+                    // Build final context for LLM
+                    $finalContext = $webpageContext;
+                    $userMessageForLLM = "IMPORTANT: Use ONLY the following content to answer. If the answer is not present, say 'I don't know.'\n\n" . $finalContext . "QUESTION: " . $question;
+                    // Stream the LLM response as usual, but with the webpage context
+                    $prompt = $userMessageForLLM;
+                } else {
+                    // If not processed or no chunks, dispatch background job and return processing message
+                    ProcessWebpageForRAG::dispatch($url, null, null);
+                    return response('Webpage is being processed. You will be notified when it is ready.', 200, [
+                        'Content-Type' => 'text/plain'
+                    ]);
+                }
+            } else {
+                // If not processed, dispatch background job and return processing message
+                ProcessWebpageForRAG::dispatch($url, null, null);
+                return response('Webpage is being processed. You will be notified when it is ready.', 200, [
+                    'Content-Type' => 'text/plain'
+                ]);
+            }
+        }
+
         // Only perform RAG search if files are explicitly selected
         $relevantContent = [];
         if (!empty($selectedFiles)) {
