@@ -58,6 +58,15 @@ class ProcessWebpageForRAG implements ShouldQueue
             } else {
                 $webpages_id = $webpageRow->id;
             }
+
+            // Safeguard: Prevent duplicate chunk insertion
+            $existingChunks = \Illuminate\Support\Facades\DB::table('webpage_chunks')->where('webpages_id', $webpages_id)->exists();
+            if ($existingChunks) {
+                // Already processed, skip chunking and embedding
+                event(new WebpageProcessed($this->url, 'completed'));
+                return;
+            }
+
             $chunker = new Chunker();
             $embedder = new EmbeddingService();
             $vectorSearch = new VectorSearchService();

@@ -59,7 +59,8 @@ class ChatbotController extends Controller
             // Check if webpage has already been processed (chunks exist)
             $webpageId = md5($url);
             $webpageRow = \Illuminate\Support\Facades\DB::table('webpages')->where('webpage_id', $webpageId)->first();
-            if ($webpageRow) {
+            $chunksExist = \Illuminate\Support\Facades\DB::table('webpage_chunks')->where('webpages_id', optional($webpageRow)->id)->exists();
+            if ($webpageRow && $chunksExist) {
                 // Get relevant chunks for this webpage
                 $relevantWebChunks = $this->searchRelevantWebpageChunks($question, $webpageId);
                 if (!empty($relevantWebChunks)) {
@@ -76,14 +77,15 @@ class ChatbotController extends Controller
                         'debug_enabled' => config('app.debug', false)
                     ]);
                 }
+            } else {
+                // If not processed or no chunks, dispatch background job and return processing message
+                ProcessWebpageForRAG::dispatch($url, null, null);
+                return response()->json([
+                    'reply' => 'Webpage is being processed. You will be notified when it is ready.',
+                    'web_chunks_used' => false,
+                    'debug_enabled' => config('app.debug', false)
+                ]);
             }
-            // If not processed or no chunks, dispatch background job and return processing message
-            ProcessWebpageForRAG::dispatch($url, null, null);
-            return response()->json([
-                'reply' => 'Webpage is being processed. You will be notified when it is ready.',
-                'web_chunks_used' => false,
-                'debug_enabled' => config('app.debug', false)
-            ]);
         }
 
         // Only perform RAG search if files are explicitly selected
