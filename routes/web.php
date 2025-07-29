@@ -25,6 +25,12 @@ Route::get('/chatbot/streaming-enabled', [App\Http\Controllers\ChatbotController
 // Endpoint for checking file processing status (polling)
 Route::post('/chatbot/processing-status', [App\Http\Controllers\ChatbotController::class, 'processingStatus']);
 
+// Endpoint for sending a webpage for processing (Attach URL)
+Route::post('/chatbot/process-webpage', [App\Http\Controllers\ChatbotController::class, 'processWebpage']);
+
+// Endpoint for checking webpage processing status (polling)
+Route::post('/chatbot/webpage-processing-status', [App\Http\Controllers\ChatbotController::class, 'webpageProcessingStatus']);
+
 // Endpoint for getting RAG information
 Route::get('/chatbot/rag-info', [App\Http\Controllers\ChatbotController::class, 'getRagInfo']);
 

@@ -553,6 +553,58 @@ EOT;
     }
 
     /**
+     * Check the processing status of one or more webpages
+     * 
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function webpageProcessingStatus(Request $request)
+    {
+        $urls = $request->input('urls', []);
+        
+        Log::info('Checking webpage processing status for URLs:', $urls);
+
+        if (empty($urls)) {
+            Log::warning('No URLs provided for processing status check');
+            return response()->json(['error' => 'No URLs provided'], 400);
+        }
+
+        $statuses = [];
+        foreach ($urls as $url) {
+            $webpageId = md5($url);
+            $webpage = \Illuminate\Support\Facades\DB::table('webpages')
+                ->where('webpage_id', $webpageId)
+                ->first();
+
+            if (!$webpage) {
+                Log::warning("Webpage not found for URL: {$url}");
+                $statuses[] = [
+                    'url' => $url,
+                    'status' => 'failed',
+                    'error' => 'Webpage not found'
+                ];
+                continue;
+            }
+
+            Log::info("Webpage status for $url:", ['status' => $webpage->status]);
+
+            $status = [
+                'url' => $url,
+                'status' => $webpage->status
+            ];
+
+            if ($webpage->status === 'failed') {
+                $status['error'] = $webpage->error_message ?? 'Processing failed';
+            }
+
+            $statuses[] = $status;
+        }
+
+        Log::info('Returning webpage statuses:', $statuses);
+        return response()->json($statuses);
+    }
+
+    /**
      * Get information about available files for RAG.
      */
     public function getRagInfo()
@@ -894,6 +946,45 @@ EOT;
             \Illuminate\Support\Facades\Log::error('Error searching for relevant webpage chunks: ' . $e->getMessage());
             return [];
         }
+    }
+
+    /**
+     * Process a webpage URL for RAG integration
+     * 
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function processWebpage(Request $request)
+    {
+        $url = $request->input('url');
+        
+        if (empty($url) || !filter_var($url, FILTER_VALIDATE_URL)) {
+            return response()->json(['error' => 'URL is required'], 400);
+        }
+
+        // Check if webpage is already being processed
+        $webpageId = md5($url);
+        $existing = \Illuminate\Support\Facades\DB::table('webpages')
+            ->where('webpage_id', $webpageId)
+            ->where('status', 'processing')
+            ->first();
+
+        if ($existing) {
+            return response()->json([
+                'status' => 'processing',
+                'message' => 'Webpage is already being processed.'
+            ]);
+        }
+
+        // Dispatch the job to process the webpage
+        ProcessWebpageForRAG::dispatch($url, null, null);
+
+        return response()->json([
+            'status' => 'processing',
+            'message' => 'Webpage has been queued for processing.',
+            'webpage_processing' => true,
+            'url' => $url
+        ]);
     }
 
     /**

@@ -219,6 +219,7 @@ const applyFileSelectionBtn = document.getElementById('applyFileSelectionBtn');
 
 let selectedFiles = new Set(); // Track selected files for RAG context
 let allAvailableFiles = []; // Store all available files for filtering
+let processingUrls = new Set(); // Track URLs being processed
 
 function addMessage(text, sender, isError = false, retryCallback = null, isLoading = false) {
     const msgDiv = document.createElement('div');
@@ -348,6 +349,14 @@ async function sendMessage(msg) {
     if (resp && resp.ok) {
         try {
             const data = await resp.json();
+
+            if (data.webpage_processing && data.url) {
+                if (!processingUrls.has(data.url)) {
+                    processingUrls.add(data.url);
+                    showWebpageProcessing(data.url);
+                    setupWebpageEventListener(data.url, msg, false);
+                }
+            }
             
             // Validate response structure
             if (!data || typeof data !== 'object') {
@@ -420,6 +429,14 @@ async function streamMessage(msg) {
             try {
                 return response.json().then(data => {
                     if (data && data.reply) {
+                        if (data.webpage_processing && data.url) {
+                            if (!processingUrls.has(data.url)) {
+                                processingUrls.add(data.url);
+                                showWebpageProcessing(data.url);
+                                setupWebpageEventListener(data.url, msg, false);
+                            }
+                        }
+
                         addMessage(data.reply, 'bot');
                     } else {
                         addMessage('Error: Invalid response format from server.', 'bot', true, retryCallback);
@@ -547,10 +564,11 @@ const fileAttachInput = document.getElementById('file-attach');
 const attachFileBtn = document.getElementById('attachFileBtn');
 
 attachUrlBtn && attachUrlBtn.addEventListener('click', function() {
-    if (urlAttachInput && urlAttachInput.value.trim()) {
-        messageInput.value = urlAttachInput.value.trim() + (messageInput.value ? ('\n' + messageInput.value) : '');
+    const url = urlAttachInput.value.trim();
+    if (url) {
+        addMessage(url, 'user');
+        messageInput.value = '';
         urlAttachInput.value = '';
-        // Optionally close dropdown
         document.body.click(); // closes any open dropdown
         messageInput.focus();
     }
@@ -669,6 +687,73 @@ function removeFileProcessing(fileName) {
     if (div) div.remove();
 }
 
+// Polling-based webpage processing status
+
+function showWebpageProcessing(url) {
+    console.log('Showing webpage processing for:', url);
+    if (processingUrls.has(url)) {
+        console.log('Already processing:', url);
+        return;
+    }
+    processingUrls.add(url);
+    const div = document.createElement('div');
+    div.className = 'processing-item webpage';
+    div.setAttribute('data-url', url);
+    div.innerHTML = `
+        <div class="spinner-border spinner-border-sm text-primary" role="status">
+            <span class="visually-hidden">Processing...</span>
+        </div>
+        <span class="ms-2">Processing webpage: ${url}</span>
+    `;
+    processingFilesDiv.appendChild(div);
+    console.log('Starting webpage polling');
+    startWebpagePolling();
+}
+
+function showWebpageProcessed(url) {
+    console.log('Webpage processed:', url);
+    const div = document.querySelector(`.processing-item.webpage[data-url="${url}"]`);
+    if (div) {
+        div.innerHTML = `
+            <i class="bi bi-check-circle-fill text-success"></i>
+            <span class="ms-2">Webpage processed: ${url}</span>
+        `;
+        setTimeout(() => {
+            div.remove();
+            processingUrls.delete(url);
+            if (processingUrls.size === 0) {
+                if (webpagePollingInterval) {
+                    clearInterval(webpagePollingInterval);
+                    webpagePollingInterval = null;
+                }
+            }
+        }, 5000);
+    } else {
+        console.log('Could not find processing div for:', url);
+    }
+}
+
+function showWebpageFailed(url, errorMsg) {
+    const div = document.querySelector(`.processing-item.webpage[data-url="${url}"]`);
+    if (div) {
+        div.innerHTML = `
+            <i class="bi bi-x-circle-fill text-danger"></i>
+            <span class="ms-2">Failed to process webpage: ${url}</span>
+            <div class="small text-danger mt-1">${errorMsg}</div>
+        `;
+        setTimeout(() => {
+            div.remove();
+            processingUrls.delete(url);
+            if (processingUrls.size === 0) {
+                if (webpagePollingInterval) {
+                    clearInterval(webpagePollingInterval);
+                    webpagePollingInterval = null;
+                }
+            }
+        }, 10000);
+    }
+}
+
 // Simple polling for file processing status (no WebSocket required)
 let processingFiles = new Set();
 let pollingInterval;
@@ -727,6 +812,20 @@ function stopFileProcessingPolling() {
     }
 }
 
+// Simple polling for webpage processing status
+let processingWebpages = new Set();
+let webpagePollingInterval;
+
+function startWebpagePolling() {
+    if (webpagePollingInterval) return; // Already polling
+    
+    // Initial check
+    checkWebpageStatus();
+    
+    // Set up polling interval
+    webpagePollingInterval = setInterval(checkWebpageStatus, 5000); // Check every 5 seconds
+}
+
 // Check RAG status and show indicator
 function checkRagStatus() {
     fetch('/chatbot/rag-info')
@@ -742,6 +841,47 @@ function checkRagStatus() {
         .catch(error => {
             console.log('Error checking RAG status:', error);
         });
+}
+
+function checkWebpageStatus() {
+    if (processingUrls.size === 0) {
+        console.log('No URLs being processed');
+        if (webpagePollingInterval) {
+            clearInterval(webpagePollingInterval);
+            webpagePollingInterval = null;
+        }
+        return;
+    }
+
+    console.log('Checking status for URLs:', Array.from(processingUrls));
+
+    // Send AJAX request to check processing status
+    fetch('/chatbot/webpage-processing-status', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content
+        },
+        body: JSON.stringify({
+            urls: Array.from(processingUrls)
+        })
+    })
+    .then(response => response.json())
+    .then(statuses => {
+        console.log('Received statuses:', statuses);
+        statuses.forEach(status => {
+            console.log('Processing status:', status);
+            if (status.status === 'completed') {
+                showWebpageProcessed(status.url);
+            } else if (status.status === 'failed') {
+                showWebpageFailed(status.url, status.error || 'Processing failed');
+            }
+            // If still processing, keep the processing indicator
+        });
+    })
+    .catch(error => {
+        console.error('Error checking webpage status:', error);
+    });
 }
 
 function showRagIndicator(fileCount) {
@@ -763,6 +903,39 @@ function hideRagIndicator() {
     if (indicator) {
         indicator.style.display = 'none';
     }
+}
+
+// Handle webpage processing events
+function setupWebpageEventListener(url, message, shouldStream = false) {
+    // Start polling for webpage status
+    processingWebpages.add(url);
+    startWebpagePolling();
+
+    // Listen for the WebpageProcessed event
+    Echo.private('webpage-processing')
+        .listen('.webpage.processed', (data) => {
+            if (data.url === url) {
+                showWebpageProcessed(url);
+                processingUrls.delete(url);
+                processingWebpages.delete(url);
+                
+                // After webpage is processed, send the message again
+                if (message) {
+                    if (shouldStream) {
+                        streamMessage(message);
+                    } else {
+                        sendMessage(message);
+                    }
+                }
+            }
+        })
+        .listen('.webpage.failed', (data) => {
+            if (data.url === url) {
+                showWebpageFailed(url, data.error || 'Unknown error');
+                processingUrls.delete(url);
+                processingWebpages.delete(url);
+            }
+        });
 }
 
 // Global error handler for uncaught JavaScript errors
@@ -1018,6 +1191,7 @@ applyFileSelectionBtn && applyFileSelectionBtn.addEventListener('click', functio
 // Start polling when page loads
 document.addEventListener('DOMContentLoaded', function() {
     startFileProcessingPolling();
+    startWebpagePolling();
     checkRagStatus(); // Check RAG status on page load
 });
 </script>
