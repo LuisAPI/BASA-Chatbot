@@ -351,11 +351,11 @@ async function sendMessage(msg) {
             const data = await resp.json();
 
             if (data.webpage_processing && data.url) {
-                if (!processingUrls.has(data.url)) {
-                    processingUrls.add(data.url);
-                    showWebpageProcessing(data.url);
-                    setupWebpageEventListener(data.url, msg, false);
-                }
+                console.log('Webpage processing detected:', data.url);
+                processingUrls.add(data.url);
+                console.log('Added URL to processing set:', data.url);
+                showWebpageProcessing(data.url);
+                setupWebpageEventListener(data.url, msg, false);
             }
             
             // Validate response structure
@@ -566,11 +566,32 @@ const attachFileBtn = document.getElementById('attachFileBtn');
 attachUrlBtn && attachUrlBtn.addEventListener('click', function() {
     const url = urlAttachInput.value.trim();
     if (url) {
+        console.log('URL submitted:', url);
         addMessage(url, 'user');
+        // Add the URL to processing set immediately
+        processingUrls.add(url);
+        console.log('Added URL to processing set:', url);
+        showWebpageProcessing(url);
+        startWebpagePolling();
+        
         messageInput.value = '';
         urlAttachInput.value = '';
         document.body.click(); // closes any open dropdown
         messageInput.focus();
+        
+        // Send the URL for processing
+        fetch('/chatbot/process-webpage', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+            },
+            body: JSON.stringify({ url: url })
+        }).catch(error => {
+            console.error('Error processing webpage:', error);
+            processingUrls.delete(url);
+            showWebpageFailed(url, 'Failed to start processing');
+        });
     }
 });
 
@@ -690,23 +711,32 @@ function removeFileProcessing(fileName) {
 // Polling-based webpage processing status
 
 function showWebpageProcessing(url) {
-    console.log('Showing webpage processing for:', url);
-    if (processingUrls.has(url)) {
-        console.log('Already processing:', url);
+    console.log('showWebpageProcessing called for:', url);
+    
+    // Check if we're already showing a processing indicator for this URL
+    const existingDiv = document.querySelector(`.processing-item.webpage[data-url="${url}"]`);
+    if (existingDiv) {
+        console.log('Processing indicator already exists for:', url);
         return;
     }
-    processingUrls.add(url);
+
+    // Create new processing indicator
+    console.log('Creating new processing indicator for:', url);
     const div = document.createElement('div');
-    div.className = 'processing-item webpage';
+    div.className = 'processing-item webpage alert alert-info d-flex align-items-center';
     div.setAttribute('data-url', url);
     div.innerHTML = `
-        <div class="spinner-border spinner-border-sm text-primary" role="status">
+        <div class="spinner-border spinner-border-sm text-primary me-2" role="status">
             <span class="visually-hidden">Processing...</span>
         </div>
-        <span class="ms-2">Processing webpage: ${url}</span>
+        <div>
+            <strong>Processing webpage:</strong> ${url}
+            <div class="small text-muted mt-1">This may take a few moments...</div>
+        </div>
     `;
     processingFilesDiv.appendChild(div);
-    console.log('Starting webpage polling');
+    
+    console.log('Processing indicator created. Current URLs in set:', Array.from(processingUrls));
     startWebpagePolling();
 }
 
@@ -817,13 +847,19 @@ let processingWebpages = new Set();
 let webpagePollingInterval;
 
 function startWebpagePolling() {
-    if (webpagePollingInterval) return; // Already polling
+    console.log('startWebpagePolling called');
+    if (webpagePollingInterval) {
+        console.log('Polling already active');
+        return;
+    }
     
     // Initial check
     checkWebpageStatus();
     
     // Set up polling interval
+    console.log('Setting up polling interval');
     webpagePollingInterval = setInterval(checkWebpageStatus, 5000); // Check every 5 seconds
+    console.log('Polling interval created:', webpagePollingInterval);
 }
 
 // Check RAG status and show indicator
@@ -844,7 +880,14 @@ function checkRagStatus() {
 }
 
 function checkWebpageStatus() {
-    if (processingUrls.size === 0) {
+    console.log('checkWebpageStatus called');
+    console.log('processingUrls:', Array.from(processingUrls));
+    console.log('processingWebpages:', Array.from(processingWebpages));
+    
+    // Combine both sets to ensure we don't miss any URLs
+    const urlsToCheck = new Set([...processingUrls, ...processingWebpages]);
+    
+    if (urlsToCheck.size === 0) {
         console.log('No URLs being processed');
         if (webpagePollingInterval) {
             clearInterval(webpagePollingInterval);
@@ -853,7 +896,7 @@ function checkWebpageStatus() {
         return;
     }
 
-    console.log('Checking status for URLs:', Array.from(processingUrls));
+    console.log('Checking status for URLs:', Array.from(urlsToCheck));
 
     // Send AJAX request to check processing status
     fetch('/chatbot/webpage-processing-status', {
@@ -863,7 +906,7 @@ function checkWebpageStatus() {
             'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content
         },
         body: JSON.stringify({
-            urls: Array.from(processingUrls)
+            urls: Array.from(urlsToCheck)
         })
     })
     .then(response => response.json())
@@ -907,20 +950,30 @@ function hideRagIndicator() {
 
 // Handle webpage processing events
 function setupWebpageEventListener(url, message, shouldStream = false) {
+    console.log('Setting up webpage event listener for:', url);
+    
     // Start polling for webpage status
     processingWebpages.add(url);
+    console.log('Added to processingWebpages set:', url);
+    console.log('Current processingUrls:', Array.from(processingUrls));
+    console.log('Current processingWebpages:', Array.from(processingWebpages));
+    
     startWebpagePolling();
 
     // Listen for the WebpageProcessed event
     Echo.private('webpage-processing')
         .listen('.webpage.processed', (data) => {
+            console.log('Received webpage.processed event:', data);
             if (data.url === url) {
+                console.log('Processing completed for:', url);
                 showWebpageProcessed(url);
                 processingUrls.delete(url);
                 processingWebpages.delete(url);
+                console.log('Removed from processing sets. Current URLs:', Array.from(processingUrls));
                 
                 // After webpage is processed, send the message again
                 if (message) {
+                    console.log('Sending follow-up message');
                     if (shouldStream) {
                         streamMessage(message);
                     } else {
@@ -930,10 +983,13 @@ function setupWebpageEventListener(url, message, shouldStream = false) {
             }
         })
         .listen('.webpage.failed', (data) => {
+            console.log('Received webpage.failed event:', data);
             if (data.url === url) {
+                console.log('Processing failed for:', url);
                 showWebpageFailed(url, data.error || 'Unknown error');
                 processingUrls.delete(url);
                 processingWebpages.delete(url);
+                console.log('Removed from processing sets. Current URLs:', Array.from(processingUrls));
             }
         });
 }
@@ -1190,8 +1246,35 @@ applyFileSelectionBtn && applyFileSelectionBtn.addEventListener('click', functio
 
 // Start polling when page loads
 document.addEventListener('DOMContentLoaded', function() {
+    // Check for any in-progress URLs from previous session
+    fetch('/chatbot/webpage-processing-status', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+        },
+        body: JSON.stringify({ urls: [] }) // Empty array to get all in-progress URLs
+    })
+    .then(response => response.json())
+    .then(statuses => {
+        console.log('Checking for in-progress URLs:', statuses);
+        if (statuses && statuses.length > 0) {
+            statuses.forEach(status => {
+                if (status.status === 'processing') {
+                    console.log('Found in-progress URL:', status.url);
+                    processingUrls.add(status.url);
+                    processingWebpages.add(status.url);
+                    showWebpageProcessing(status.url);
+                }
+            });
+            if (processingUrls.size > 0) {
+                startWebpagePolling();
+            }
+        }
+    })
+    .catch(error => console.error('Error checking for in-progress URLs:', error));
+    
     startFileProcessingPolling();
-    startWebpagePolling();
     checkRagStatus(); // Check RAG status on page load
 });
 </script>

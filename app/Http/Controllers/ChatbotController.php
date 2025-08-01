@@ -560,16 +560,35 @@ EOT;
      */
     public function webpageProcessingStatus(Request $request)
     {
+        // Set a reasonable timeout for status checks
+        set_time_limit(30);
+        
+        Log::info('Webpage processing status check', [
+            'urls' => $request->input('urls', [])
+        ]);
         $urls = $request->input('urls', []);
         
         Log::info('Checking webpage processing status for URLs:', $urls);
 
-        if (empty($urls)) {
-            Log::warning('No URLs provided for processing status check');
-            return response()->json(['error' => 'No URLs provided'], 400);
-        }
-
         $statuses = [];
+        
+        if (empty($urls)) {
+            // If no URLs provided, return all in-progress URLs
+            Log::info('No URLs provided, checking all in-progress webpages');
+            $inProgressWebpages = \Illuminate\Support\Facades\DB::table('webpages')
+                ->where('status', 'processing')
+                ->get();
+                
+            foreach ($inProgressWebpages as $webpage) {
+                $statuses[] = [
+                    'url' => $webpage->url,
+                    'status' => $webpage->status
+                ];
+            }
+            
+            Log::info('Found in-progress webpages:', $statuses);
+            return response()->json($statuses);
+        }
         foreach ($urls as $url) {
             $webpageId = md5($url);
             $webpage = \Illuminate\Support\Facades\DB::table('webpages')
@@ -580,8 +599,30 @@ EOT;
                 Log::warning("Webpage not found for URL: {$url}");
                 $statuses[] = [
                     'url' => $url,
+                    'status' => 'notfound',
+                    'error' => 'Webpage not found in processing queue'
+                ];
+                continue;
+            }
+
+            // Check for stalled processing (over 5 minutes)
+            if ($webpage->status === 'processing' && 
+                now()->diffInMinutes(\Carbon\Carbon::parse($webpage->updated_at)) > 5) {
+                Log::warning("Processing timeout for URL: {$url}");
+                
+                // Update the webpage status to failed
+                \Illuminate\Support\Facades\DB::table('webpages')
+                    ->where('webpage_id', $webpageId)
+                    ->update([
+                        'status' => 'failed',
+                        'error_message' => 'Processing timeout exceeded',
+                        'updated_at' => now()
+                    ]);
+                
+                $statuses[] = [
+                    'url' => $url,
                     'status' => 'failed',
-                    'error' => 'Webpage not found'
+                    'error' => 'Processing timeout exceeded'
                 ];
                 continue;
             }
@@ -956,35 +997,94 @@ EOT;
      */
     public function processWebpage(Request $request)
     {
+        // Set a generous timeout for webpage processing
+        set_time_limit(300); // 5 minutes
+        
         $url = $request->input('url');
         
         if (empty($url) || !filter_var($url, FILTER_VALIDATE_URL)) {
             return response()->json(['error' => 'URL is required'], 400);
         }
 
-        // Check if webpage is already being processed
-        $webpageId = md5($url);
-        $existing = \Illuminate\Support\Facades\DB::table('webpages')
-            ->where('webpage_id', $webpageId)
-            ->where('status', 'processing')
-            ->first();
+        try {
+            // Check if webpage is already being processed
+            $webpageId = md5($url);
+            $existing = \Illuminate\Support\Facades\DB::table('webpages')
+                ->where('webpage_id', $webpageId)
+                ->first(); // Check for any status
 
-        if ($existing) {
+            if ($existing) {
+                // Check the existing webpage's status
+                switch ($existing->status) {
+                    case 'processing':
+                        return response()->json([
+                            'status' => 'processing',
+                            'message' => 'Webpage is already being processed.',
+                            'webpage_processing' => true,
+                            'url' => $url
+                        ]);
+                    case 'failed':
+                        // If it failed before, we'll try again
+                        \Illuminate\Support\Facades\DB::table('webpages')
+                            ->where('webpage_id', $webpageId)
+                            ->update([
+                                'status' => 'processing',
+                                'error_message' => null,
+                                'updated_at' => now()
+                            ]);
+                        break;
+                    case 'completed':
+                        // If it's already completed, we'll return success
+                        return response()->json([
+                            'status' => 'completed',
+                            'message' => 'Webpage has already been processed.',
+                            'webpage_processing' => false,
+                            'url' => $url
+                        ]);
+                }
+            }
+
+            // If we get here, either there was no existing record or it failed before
+            try {
+                // Create or update the webpage record
+                \Illuminate\Support\Facades\DB::table('webpages')
+                    ->updateOrInsert(
+                        ['webpage_id' => $webpageId],
+                        [
+                            'url' => $url,
+                            'status' => 'processing',
+                            'created_at' => now(),
+                            'updated_at' => now()
+                        ]
+                    );
+
+                // Dispatch the job to process the webpage
+                ProcessWebpageForRAG::dispatch($url, null, null);
+
+                return response()->json([
+                    'status' => 'processing',
+                    'message' => 'Webpage has been queued for processing.',
+                    'webpage_processing' => true,
+                    'url' => $url
+                ]);
+            } catch (\Exception $e) {
+                Log::error('Error processing webpage: ' . $e->getMessage());
+                return response()->json([
+                    'status' => 'failed',
+                    'message' => 'Failed to process webpage: ' . $e->getMessage(),
+                    'webpage_processing' => false,
+                    'url' => $url
+                ], 500);
+            }
+        } catch (\Exception $e) {
+            Log::error('Database error in processWebpage: ' . $e->getMessage());
             return response()->json([
-                'status' => 'processing',
-                'message' => 'Webpage is already being processed.'
-            ]);
+                'status' => 'failed',
+                'message' => 'Internal server error',
+                'webpage_processing' => false,
+                'url' => $url
+            ], 500);
         }
-
-        // Dispatch the job to process the webpage
-        ProcessWebpageForRAG::dispatch($url, null, null);
-
-        return response()->json([
-            'status' => 'processing',
-            'message' => 'Webpage has been queued for processing.',
-            'webpage_processing' => true,
-            'url' => $url
-        ]);
     }
 
     /**
