@@ -566,11 +566,17 @@ const attachFileBtn = document.getElementById('attachFileBtn');
 attachUrlBtn && attachUrlBtn.addEventListener('click', function() {
     const url = urlAttachInput.value.trim();
     if (url) {
-        console.log('URL submitted:', url);
+        console.log('URL submission started:', url);
         addMessage(url, 'user');
+        
         // Add the URL to processing set immediately
         processingUrls.add(url);
-        console.log('Added URL to processing set:', url);
+        processingWebpages.add(url); // Add to both sets to ensure tracking
+        console.log('Added URL to processing sets:', 
+            'processingUrls:', Array.from(processingUrls),
+            'processingWebpages:', Array.from(processingWebpages)
+        );
+        
         showWebpageProcessing(url);
         startWebpagePolling();
         
@@ -847,18 +853,26 @@ let processingWebpages = new Set();
 let webpagePollingInterval;
 
 function startWebpagePolling() {
-    console.log('startWebpagePolling called');
+    console.log('startWebpagePolling called with current URLs:', 
+        'processingUrls:', Array.from(processingUrls),
+        'processingWebpages:', Array.from(processingWebpages)
+    );
+    
     if (webpagePollingInterval) {
-        console.log('Polling already active');
+        console.log('Polling already active, interval:', webpagePollingInterval);
         return;
     }
     
     // Initial check
+    console.log('Running initial status check');
     checkWebpageStatus();
     
     // Set up polling interval
     console.log('Setting up polling interval');
-    webpagePollingInterval = setInterval(checkWebpageStatus, 5000); // Check every 5 seconds
+    webpagePollingInterval = setInterval(() => {
+        console.log('Polling interval triggered');
+        checkWebpageStatus();
+    }, 5000); // Check every 5 seconds
     console.log('Polling interval created:', webpagePollingInterval);
 }
 
@@ -880,16 +894,20 @@ function checkRagStatus() {
 }
 
 function checkWebpageStatus() {
-    console.log('checkWebpageStatus called');
-    console.log('processingUrls:', Array.from(processingUrls));
-    console.log('processingWebpages:', Array.from(processingWebpages));
+    console.log('==========================================');
+    console.log('Checking webpage status');
+    console.log('Current tracking sets:');
+    console.log('- processingUrls:', Array.from(processingUrls));
+    console.log('- processingWebpages:', Array.from(processingWebpages));
     
     // Combine both sets to ensure we don't miss any URLs
     const urlsToCheck = new Set([...processingUrls, ...processingWebpages]);
+    console.log('Combined URLs to check:', Array.from(urlsToCheck));
     
     if (urlsToCheck.size === 0) {
-        console.log('No URLs being processed');
+        console.log('No URLs to check, cleaning up polling');
         if (webpagePollingInterval) {
+            console.log('Clearing interval:', webpagePollingInterval);
             clearInterval(webpagePollingInterval);
             webpagePollingInterval = null;
         }
@@ -959,39 +977,6 @@ function setupWebpageEventListener(url, message, shouldStream = false) {
     console.log('Current processingWebpages:', Array.from(processingWebpages));
     
     startWebpagePolling();
-
-    // Listen for the WebpageProcessed event
-    Echo.private('webpage-processing')
-        .listen('.webpage.processed', (data) => {
-            console.log('Received webpage.processed event:', data);
-            if (data.url === url) {
-                console.log('Processing completed for:', url);
-                showWebpageProcessed(url);
-                processingUrls.delete(url);
-                processingWebpages.delete(url);
-                console.log('Removed from processing sets. Current URLs:', Array.from(processingUrls));
-                
-                // After webpage is processed, send the message again
-                if (message) {
-                    console.log('Sending follow-up message');
-                    if (shouldStream) {
-                        streamMessage(message);
-                    } else {
-                        sendMessage(message);
-                    }
-                }
-            }
-        })
-        .listen('.webpage.failed', (data) => {
-            console.log('Received webpage.failed event:', data);
-            if (data.url === url) {
-                console.log('Processing failed for:', url);
-                showWebpageFailed(url, data.error || 'Unknown error');
-                processingUrls.delete(url);
-                processingWebpages.delete(url);
-                console.log('Removed from processing sets. Current URLs:', Array.from(processingUrls));
-            }
-        });
 }
 
 // Global error handler for uncaught JavaScript errors

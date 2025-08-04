@@ -151,7 +151,25 @@ class ProcessWebpageForRAG implements ShouldQueue
                 'content' => $content
             ];
         } catch (\Exception $e) {
-            return ['error' => 'Sorry, I could not fetch or process the webpage.'];
+            $errorMessage = $e->getMessage();
+            $context = '';
+            
+            if ($e instanceof \Spatie\Browsershot\Exceptions\CouldNotTakeScreenshot) {
+                $context = 'Chrome/Browsershot error: ';
+            } elseif ($e instanceof \GuzzleHttp\Exception\RequestException) {
+                $context = 'Network error: ';
+            } elseif ($e instanceof \RuntimeException) {
+                $context = 'Content processing error: ';
+            }
+            
+            \Log::error($context . $errorMessage, [
+                'url' => $url,
+                'exception' => get_class($e),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+            
+            return ['error' => $context . $errorMessage];
         }
     }
 }
