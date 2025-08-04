@@ -62,23 +62,43 @@ class ProcessWebpageForRAG implements ShouldQueue
             // Safeguard: Prevent duplicate chunk insertion
             $existingChunks = \Illuminate\Support\Facades\DB::table('webpage_chunks')->where('webpages_id', $webpages_id)->exists();
             if ($existingChunks) {
-                // Already processed, skip chunking and embedding
-                event(new WebpageProcessed($this->url, 'completed'));
-                return;
+                // Already processed, verify we have some chunks before marking as complete
+                $hasChunks = \Illuminate\Support\Facades\DB::table('webpage_chunks')
+                    ->where('webpages_id', $webpages_id)
+                    ->count() > 0;
+                    
+                if ($hasChunks) {
+                    event(new WebpageProcessed($this->url, 'completed'));
+                    return;
+                }
+                // If no chunks found, reprocess
             }
 
             $chunker = new Chunker();
             $embedder = new EmbeddingService();
             $vectorSearch = new VectorSearchService();
             $chunks = $chunker->chunkText($content);
+            
+            if (empty($chunks)) {
+                event(new WebpageProcessed($this->url, 'failed', 'No content chunks could be extracted from the webpage'));
+                return;
+            }
+            
+            $storedChunks = 0;
             foreach ($chunks as $chunk) {
                 $embedding = $embedder->getEmbedding($chunk);
                 if ($embedding) {
                     // Store using VectorSearchService for webpages
                     $vectorSearch->storeChunk('webpage', $webpages_id, $chunk, $embedding);
+                    $storedChunks++;
                 }
             }
-            event(new WebpageProcessed($this->url, 'completed'));
+            
+            if ($storedChunks > 0) {
+                event(new WebpageProcessed($this->url, 'completed'));
+            } else {
+                event(new WebpageProcessed($this->url, 'failed', 'Failed to store any chunks with embeddings'));
+            }
         } catch (\Exception $e) {
             event(new WebpageProcessed($this->url, 'failed', $e->getMessage()));
         }
@@ -134,7 +154,7 @@ class ProcessWebpageForRAG implements ShouldQueue
                 ->setOption('waitUntil', env('BROWSERSHOT_WAIT_UNTIL', 'networkidle0'))
                 ->setOption('headers', $headers)
                 ->setViewport($viewport[0], $viewport[1])
-                ->timeout(env('BROWSERSHOT_TIMEOUT', 60))
+                ->timeout(env('BROWSERSHOT_TIMEOUT', 120)) // Increased timeout to 120 seconds
                 ->bodyHtml();
 
             // Use Readability to parse the HTML

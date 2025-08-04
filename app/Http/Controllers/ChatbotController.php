@@ -1105,4 +1105,66 @@ EOT;
         $context .= "CRITICAL INSTRUCTION: When answering questions, ALWAYS prioritize and use the information above from the webpage as your primary source. Only fall back to your general knowledge about DEPDev if the question is completely unrelated to the webpage content. Always cite the webpage title and URL when possible.\n\n";
         return $context;
     }
+
+    /**
+     * Check the processing status of webpages
+     */
+    public function webpageStatus(Request $request)
+    {
+        $urls = $request->input('urls', []);
+        
+        if (empty($urls)) {
+            // If no URLs provided, check all in-progress webpages
+            Log::info('Webpage processing status check', ['urls' => $urls]);
+            Log::info('Checking webpage processing status for URLs:');
+            Log::info('No URLs provided, checking all in-progress webpages');
+            
+            // Query all in-progress webpages (those without chunks)
+            $inProgressWebpages = \DB::table('webpages')
+                ->select('webpages.*')
+                ->leftJoin('webpage_chunks', 'webpages.id', '=', 'webpage_chunks.webpages_id')
+                ->whereNull('webpage_chunks.id')
+                ->get();
+            
+            Log::info('Found in-progress webpages:', $inProgressWebpages->pluck('url')->toArray());
+            
+            $statuses = [];
+            foreach ($inProgressWebpages as $webpage) {
+                $statuses[$webpage->url] = 'processing';
+            }
+            
+            return response()->json(['statuses' => $statuses]);
+        }
+
+        $statuses = [];
+        $errors = [];
+        
+        foreach ($urls as $url) {
+            $webpageId = md5($url);
+            $webpage = \DB::table('webpages')->where('webpage_id', $webpageId)->first();
+            
+            if (!$webpage) {
+                // URL not found in database
+                $statuses[$url] = 'failed';
+                $errors[$url] = 'Webpage not found in database';
+                continue;
+            }
+            
+            // Check if webpage has chunks (meaning it's been processed)
+            $hasChunks = \DB::table('webpage_chunks')
+                ->where('webpages_id', $webpage->id)
+                ->exists();
+            
+            if ($hasChunks) {
+                $statuses[$url] = 'completed';
+            } else {
+                $statuses[$url] = 'processing';
+            }
+        }
+        
+        return response()->json([
+            'statuses' => $statuses,
+            'errors' => $errors
+        ]);
+    }
 }

@@ -29,7 +29,7 @@ Route::post('/chatbot/processing-status', [App\Http\Controllers\ChatbotControlle
 Route::post('/chatbot/process-webpage', [App\Http\Controllers\ChatbotController::class, 'processWebpage']);
 
 // Endpoint for checking webpage processing status (polling)
-Route::post('/chatbot/webpage-processing-status', [App\Http\Controllers\ChatbotController::class, 'webpageProcessingStatus']);
+Route::post('/chatbot/webpage-processing-status', [App\Http\Controllers\ChatbotController::class, 'webpageStatus']);
 
 // Endpoint for getting RAG information
 Route::get('/chatbot/rag-info', [App\Http\Controllers\ChatbotController::class, 'getRagInfo']);

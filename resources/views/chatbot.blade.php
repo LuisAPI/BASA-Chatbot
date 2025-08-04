@@ -914,31 +914,35 @@ function checkWebpageStatus() {
         return;
     }
 
-    console.log('Checking status for URLs:', Array.from(urlsToCheck));
-
-    // Send AJAX request to check processing status
+    // Make the API call to check status
     fetch('/chatbot/webpage-processing-status', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
-            'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content
+            'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
         },
         body: JSON.stringify({
             urls: Array.from(urlsToCheck)
         })
     })
     .then(response => response.json())
-    .then(statuses => {
-        console.log('Received statuses:', statuses);
-        statuses.forEach(status => {
-            console.log('Processing status:', status);
-            if (status.status === 'completed') {
-                showWebpageProcessed(status.url);
-            } else if (status.status === 'failed') {
-                showWebpageFailed(status.url, status.error || 'Processing failed');
-            }
-            // If still processing, keep the processing indicator
-        });
+    .then(data => {
+        console.log('Status check response:', data);
+        if (data.statuses) {
+            Object.entries(data.statuses).forEach(([url, status]) => {
+                if (status === 'completed') {
+                    console.log('URL completed:', url);
+                    showWebpageProcessed(url);
+                    processingUrls.delete(url);
+                    processingWebpages.delete(url);
+                } else if (status === 'failed') {
+                    console.log('URL failed:', url);
+                    showWebpageFailed(url, data.errors?.[url] || 'Processing failed');
+                    processingUrls.delete(url);
+                    processingWebpages.delete(url);
+                }
+            });
+        }
     })
     .catch(error => {
         console.error('Error checking webpage status:', error);
