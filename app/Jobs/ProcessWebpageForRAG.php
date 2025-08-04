@@ -153,8 +153,9 @@ class ProcessWebpageForRAG implements ShouldQueue
                 ->setOption('args', $args)
                 ->setOption('waitUntil', env('BROWSERSHOT_WAIT_UNTIL', 'networkidle0'))
                 ->setOption('headers', $headers)
+                ->setOption('protocolTimeout', env('BROWSERSHOT_PROTOCOL_TIMEOUT', 60000)) // Protocol timeout in ms
                 ->setViewport($viewport[0], $viewport[1])
-                ->timeout(env('BROWSERSHOT_TIMEOUT', 120)) // Increased timeout to 120 seconds
+                ->timeout(env('BROWSERSHOT_TIMEOUT', 120)) // Process timeout in seconds
                 ->bodyHtml();
 
             // Use Readability to parse the HTML

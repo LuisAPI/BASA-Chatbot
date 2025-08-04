@@ -569,20 +569,16 @@ attachUrlBtn && attachUrlBtn.addEventListener('click', function() {
         console.log('URL submission started:', url);
         addMessage(url, 'user');
         
-        // Add the URL to processing set immediately
+        // Add the URL to processing sets and show UI immediately
         processingUrls.add(url);
-        processingWebpages.add(url); // Add to both sets to ensure tracking
-        console.log('Added URL to processing sets:', 
-            'processingUrls:', Array.from(processingUrls),
-            'processingWebpages:', Array.from(processingWebpages)
-        );
-        
+        processingWebpages.add(url);
         showWebpageProcessing(url);
         startWebpagePolling();
         
+        // Clear inputs and close dropdown
         messageInput.value = '';
         urlAttachInput.value = '';
-        document.body.click(); // closes any open dropdown
+        document.body.click();
         messageInput.focus();
         
         // Send the URL for processing
@@ -593,10 +589,25 @@ attachUrlBtn && attachUrlBtn.addEventListener('click', function() {
                 'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
             },
             body: JSON.stringify({ url: url })
-        }).catch(error => {
+        })
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('Failed to start processing');
+            }
+            return response.json();
+        })
+        .then(data => {
+            if (data.error) {
+                throw new Error(data.error);
+            }
+            console.log('URL processing started successfully:', url);
+        })
+        .catch(error => {
             console.error('Error processing webpage:', error);
             processingUrls.delete(url);
-            showWebpageFailed(url, 'Failed to start processing');
+            processingWebpages.delete(url);
+            showWebpageFailed(url, error.message || 'Failed to start processing');
+            stopWebpagePolling();
         });
     }
 });
@@ -746,23 +757,25 @@ function showWebpageProcessing(url) {
     startWebpagePolling();
 }
 
+function stopWebpagePolling() {
+    if (webpagePollingInterval) {
+        console.log('Stopping webpage polling interval:', webpagePollingInterval);
+        clearInterval(webpagePollingInterval);
+        webpagePollingInterval = null;
+    }
+}
+
 function showWebpageProcessed(url) {
     console.log('Webpage processed:', url);
     const div = document.querySelector(`.processing-item.webpage[data-url="${url}"]`);
     if (div) {
+        div.className = 'processing-item webpage alert alert-success d-flex align-items-center';
         div.innerHTML = `
             <i class="bi bi-check-circle-fill text-success"></i>
             <span class="ms-2">Webpage processed: ${url}</span>
         `;
         setTimeout(() => {
             div.remove();
-            processingUrls.delete(url);
-            if (processingUrls.size === 0) {
-                if (webpagePollingInterval) {
-                    clearInterval(webpagePollingInterval);
-                    webpagePollingInterval = null;
-                }
-            }
         }, 5000);
     } else {
         console.log('Could not find processing div for:', url);
@@ -853,13 +866,14 @@ let processingWebpages = new Set();
 let webpagePollingInterval;
 
 function startWebpagePolling() {
-    console.log('startWebpagePolling called with current URLs:', 
-        'processingUrls:', Array.from(processingUrls),
-        'processingWebpages:', Array.from(processingWebpages)
-    );
+    console.log('startWebpagePolling called');
     
-    if (webpagePollingInterval) {
-        console.log('Polling already active, interval:', webpagePollingInterval);
+    // Stop any existing polling first to prevent duplicates
+    stopWebpagePolling();
+    
+    // Ensure we have URLs to check
+    if (processingUrls.size === 0 && processingWebpages.size === 0) {
+        console.log('No URLs to poll for, not starting polling');
         return;
     }
     
@@ -869,10 +883,7 @@ function startWebpagePolling() {
     
     // Set up polling interval
     console.log('Setting up polling interval');
-    webpagePollingInterval = setInterval(() => {
-        console.log('Polling interval triggered');
-        checkWebpageStatus();
-    }, 5000); // Check every 5 seconds
+    webpagePollingInterval = setInterval(checkWebpageStatus, 5000); // Check every 5 seconds
     console.log('Polling interval created:', webpagePollingInterval);
 }
 
@@ -929,6 +940,7 @@ function checkWebpageStatus() {
     .then(data => {
         console.log('Status check response:', data);
         if (data.statuses) {
+            let allCompleted = true;
             Object.entries(data.statuses).forEach(([url, status]) => {
                 if (status === 'completed') {
                     console.log('URL completed:', url);
@@ -940,8 +952,16 @@ function checkWebpageStatus() {
                     showWebpageFailed(url, data.errors?.[url] || 'Processing failed');
                     processingUrls.delete(url);
                     processingWebpages.delete(url);
+                } else if (status === 'processing') {
+                    console.log('URL still processing:', url);
+                    allCompleted = false;
                 }
             });
+            
+            // If no URLs are left processing, stop polling
+            if (allCompleted) {
+                stopWebpagePolling();
+            }
         }
     })
     .catch(error => {
