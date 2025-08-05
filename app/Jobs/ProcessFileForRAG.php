@@ -97,7 +97,7 @@ class ProcessFileForRAG implements ShouldQueue
             foreach ($chunks as $chunk) {
                 $embedding = $embedder->getEmbedding($chunk);
                 if ($embedding) {
-                    $vectorSearch->storeChunk($this->fileName, $chunk, $embedding);
+                    $vectorSearch->storeChunk('file', $this->fileName, $chunk, $embedding);
                 }
             }
             

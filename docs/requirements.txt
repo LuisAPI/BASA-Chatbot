@@ -1,0 +1,5 @@
+# Documentation dependencies
+sphinx
+sphinx-rtd-theme
+myst-parser
+diagrams  # For generating our diagrams

@@ -10,6 +10,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use App\Jobs\ProcessFileForRAG;
+use App\Jobs\ProcessWebpageForRAG;
 
 class ChatbotController extends Controller
 {
@@ -47,17 +48,44 @@ class ChatbotController extends Controller
         // Check if the user message contains a URL (with or without a question)
         $url = null;
         $question = null;
-        if (preg_match('/(https?:\/\/[^\s]+)/i', $userMessage, $matches)) {
-            $url = $matches[1];
-            $question = trim(str_replace($url, '', $userMessage));
+        $webpageContext = '';
+        // Improved URL regex: match until whitespace or end, exclude trailing punctuation
+        if (preg_match('/(https?:\/\/[\w\-\.\/?#=&;%:~+@!$\*\(\),]+)(?=\s|$|[.?!,;:])/i', $userMessage, $matches)) {
+            $url = rtrim($matches[1], '.?!,;:');
+            $question = trim(str_replace($matches[0], '', $userMessage));
             if (empty($question)) {
                 $question = 'Summarize the following webpage.';
             }
-            $webResult = $this->fetchAndParseWebpage($url);
-            if (isset($webResult['error'])) {
-                return response()->json(['reply' => $webResult['error']]);
+            // Check if webpage has already been processed (chunks exist)
+            $webpageId = md5($url);
+            $webpageRow = \Illuminate\Support\Facades\DB::table('webpages')->where('webpage_id', $webpageId)->first();
+            $chunksExist = \Illuminate\Support\Facades\DB::table('webpage_chunks')->where('webpages_id', optional($webpageRow)->id)->exists();
+            if ($webpageRow && $chunksExist) {
+                // Get relevant chunks for this webpage
+                $relevantWebChunks = $this->searchRelevantWebpageChunks($question, $webpageId);
+                if (!empty($relevantWebChunks)) {
+                    $webpageContext = $this->buildWebpageContext(array_slice($relevantWebChunks, 0, 2), $webpageRow->title, $url);
+                    // Build final context for LLM
+                    $finalContext = $webpageContext;
+                    $userMessageForLLM = "IMPORTANT: Use ONLY the following content to answer. If the answer is not present, say 'I don't know.'\n\n" . $finalContext . "QUESTION: " . $question;
+                    $botReply = $this->sendToLLM($userMessageForLLM, null, []);
+                    return response()->json([
+                        'reply' => $botReply,
+                        'web_chunks_used' => true,
+                        'webpage_title' => $webpageRow->title,
+                        'webpage_url' => $url,
+                        'debug_enabled' => config('app.debug', false)
+                    ]);
+                }
+            } else {
+                // If not processed or no chunks, dispatch background job and return processing message
+                ProcessWebpageForRAG::dispatch($url, null, null);
+                return response()->json([
+                    'reply' => 'Webpage is being processed. You will be notified when it is ready.',
+                    'web_chunks_used' => false,
+                    'debug_enabled' => config('app.debug', false)
+                ]);
             }
-            $userMessage = $question . " Title: {$webResult['title']}. Content: {$webResult['content']}";
         }
 
         // Only perform RAG search if files are explicitly selected
@@ -65,14 +93,27 @@ class ChatbotController extends Controller
         if (!empty($selectedFiles)) {
             $relevantContent = $this->searchRelevantFileContent($userMessage, $selectedFiles);
         }
-        
-        $botReply = $this->sendToLLM($userMessage, null, $relevantContent);
-        
+
+        // Build final context for LLM
+        $finalContext = '';
+        if (!empty($webpageContext)) {
+            $finalContext .= $webpageContext . "\n\n";
+        }
+        if (!empty($relevantContent)) {
+            $finalContext .= $this->buildFileContext(array_slice($relevantContent, 0, 2)) . "\n\n";
+        }
+        if (!empty($finalContext)) {
+            $userMessage = "IMPORTANT: Use ONLY the following content to answer. If the answer is not present, say 'I don't know.'\n\n" . $finalContext . "QUESTION: " . $userMessage;
+        }
+
+        $botReply = $this->sendToLLM($userMessage, null, []);
+
         return response()->json([
             'reply' => $botReply,
             'rag_used' => !empty($relevantContent),
             'rag_chunks_found' => count($relevantContent),
             'rag_files' => !empty($relevantContent) ? array_unique(array_column($relevantContent, 'source')) : [],
+            'web_chunks_used' => !empty($webpageContext),
             'debug_enabled' => config('app.debug', false)
         ]);
     }
@@ -297,7 +338,47 @@ EOT;
         $selectedFiles = $request->input('selected_files', []); // New: array of selected file names
         $systemPrompt = $this->getSystemPrompt();
         $model = env('LLM_MODEL', 'tinyllama');
-        
+
+        // --- Webpage RAG logic (mirrors ask()) ---
+        $url = null;
+        $question = null;
+        $webpageContext = '';
+        // Improved URL regex: match until whitespace or end, exclude trailing punctuation
+        if (preg_match('/(https?:\/\/[\w\-\.\/?#=&;%:~+@!$\*\(\),]+)(?=\s|$|[.?!,;:])/i', $prompt, $matches)) {
+            $url = rtrim($matches[1], '.?!,;:');
+            $question = trim(str_replace($matches[0], '', $prompt));
+            if (empty($question)) {
+                $question = 'Summarize the following webpage.';
+            }
+            // Check if webpage has already been processed (chunks exist)
+            $webpageId = md5($url);
+            $webpageRow = \Illuminate\Support\Facades\DB::table('webpages')->where('webpage_id', $webpageId)->first();
+            if ($webpageRow) {
+                // Get relevant chunks for this webpage
+                $relevantWebChunks = $this->searchRelevantWebpageChunks($question, $webpageId);
+                if (!empty($relevantWebChunks)) {
+                    $webpageContext = $this->buildWebpageContext(array_slice($relevantWebChunks, 0, 2), $webpageRow->title, $url);
+                    // Build final context for LLM
+                    $finalContext = $webpageContext;
+                    $userMessageForLLM = "IMPORTANT: Use ONLY the following content to answer. If the answer is not present, say 'I don't know.'\n\n" . $finalContext . "QUESTION: " . $question;
+                    // Stream the LLM response as usual, but with the webpage context
+                    $prompt = $userMessageForLLM;
+                } else {
+                    // If not processed or no chunks, dispatch background job and return processing message
+                    ProcessWebpageForRAG::dispatch($url, null, null);
+                    return response('Webpage is being processed. You will be notified when it is ready.', 200, [
+                        'Content-Type' => 'text/plain'
+                    ]);
+                }
+            } else {
+                // If not processed, dispatch background job and return processing message
+                ProcessWebpageForRAG::dispatch($url, null, null);
+                return response('Webpage is being processed. You will be notified when it is ready.', 200, [
+                    'Content-Type' => 'text/plain'
+                ]);
+            }
+        }
+
         // Only perform RAG search if files are explicitly selected
         $relevantContent = [];
         if (!empty($selectedFiles)) {
@@ -468,6 +549,99 @@ EOT;
         }
         
         \Illuminate\Support\Facades\Log::info('Returning statuses:', $statuses);
+        return response()->json($statuses);
+    }
+
+    /**
+     * Check the processing status of one or more webpages
+     * 
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function webpageProcessingStatus(Request $request)
+    {
+        // Set a reasonable timeout for status checks
+        set_time_limit(30);
+        
+        Log::info('Webpage processing status check', [
+            'urls' => $request->input('urls', [])
+        ]);
+        $urls = $request->input('urls', []);
+        
+        Log::info('Checking webpage processing status for URLs:', $urls);
+
+        $statuses = [];
+        
+        if (empty($urls)) {
+            // If no URLs provided, return all in-progress URLs
+            Log::info('No URLs provided, checking all in-progress webpages');
+            $inProgressWebpages = \Illuminate\Support\Facades\DB::table('webpages')
+                ->where('status', 'processing')
+                ->get();
+                
+            foreach ($inProgressWebpages as $webpage) {
+                $statuses[] = [
+                    'url' => $webpage->url,
+                    'status' => $webpage->status
+                ];
+            }
+            
+            Log::info('Found in-progress webpages:', $statuses);
+            return response()->json($statuses);
+        }
+        foreach ($urls as $url) {
+            $webpageId = md5($url);
+            $webpage = \Illuminate\Support\Facades\DB::table('webpages')
+                ->where('webpage_id', $webpageId)
+                ->first();
+
+            if (!$webpage) {
+                Log::warning("Webpage not found for URL: {$url}");
+                $statuses[] = [
+                    'url' => $url,
+                    'status' => 'notfound',
+                    'error' => 'Webpage not found in processing queue'
+                ];
+                continue;
+            }
+
+            // Check for stalled processing (over 5 minutes)
+            if ($webpage->status === 'processing' && 
+                now()->diffInMinutes(\Carbon\Carbon::parse($webpage->updated_at)) > 5) {
+                Log::warning("Processing timeout for URL: {$url}");
+                
+                // Update the webpage status to failed
+                \Illuminate\Support\Facades\DB::table('webpages')
+                    ->where('webpage_id', $webpageId)
+                    ->update([
+                        'status' => 'failed',
+                        'error_message' => 'Processing timeout exceeded',
+                        'updated_at' => now()
+                    ]);
+                
+                $statuses[] = [
+                    'url' => $url,
+                    'status' => 'failed',
+                    'error' => 'Processing timeout exceeded'
+                ];
+                continue;
+            }
+
+            Log::info("Webpage status for $url:", ['status' => $webpage->status]);
+
+            $status = [
+                'url' => $url,
+                'status' => $webpage->status
+            ];
+
+            if ($webpage->status === 'failed') {
+                $status['error'] = $webpage->error_message ?? 'Processing failed';
+            }
+
+            $statuses[] = $status;
+        }
+
+        Log::info('Returning webpage statuses:', $statuses);
         return response()->json($statuses);
     }
 
@@ -711,63 +885,6 @@ EOT;
     }
 
     /**
-     * Fetch and parse a webpage, respecting robots.txt and returning extracted content.
-     */
-    private function fetchAndParseWebpage(string $url): ?array
-    {
-        $parsedUrl = parse_url($url);
-        $robotsUrl = $parsedUrl['scheme'] . '://' . $parsedUrl['host'] . '/robots.txt';
-        try {
-            $robotsResponse = \Illuminate\Support\Facades\Http::timeout(5)->get($robotsUrl);
-            $robotsTxt = $robotsResponse->successful() ? $robotsResponse->body() : '';
-            $isAllowed = true;
-            if ($robotsTxt) {
-                $lines = preg_split('/\r?\n/', $robotsTxt);
-                $userAgent = false;
-                foreach ($lines as $line) {
-                    $line = trim($line);
-                    if (stripos($line, 'User-agent:') === 0) {
-                        $userAgent = (stripos($line, 'User-agent: *') === 0);
-                    } elseif ($userAgent && stripos($line, 'Disallow:') === 0) {
-                        $disallowedPath = trim(substr($line, 9));
-                        if ($disallowedPath && strpos($parsedUrl['path'] ?? '/', $disallowedPath) === 0) {
-                            $isAllowed = false;
-                            break;
-                        }
-                    } elseif (stripos($line, 'User-agent:') === 0) {
-                        $userAgent = false;
-                    }
-                }
-            }
-            if (!$isAllowed) {
-                return ['error' => 'Sorry, I am not allowed to access this page due to the site\'s robots.txt rules.'];
-            }
-        } catch (\Exception $e) {
-            // If robots.txt fails, proceed (fail open)
-        }
-        try {
-            $webResponse = \Illuminate\Support\Facades\Http::timeout(10)
-                ->withHeaders(['User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'])
-                ->get($url);
-            $html = $webResponse->body();
-            $readability = new \fivefilters\Readability\Readability(new \fivefilters\Readability\Configuration());
-            $readability->parse($html);
-            $content = $readability->getContent();
-            $title = $readability->getTitle();
-            $content = strip_tags($content);
-            if (strlen($content) > 4000) {
-                $content = substr($content, 0, 1000) . '... [truncated]';
-            }
-            return [
-                'title' => $title,
-                'content' => $content
-            ];
-        } catch (\Exception $e) {
-            return ['error' => 'Sorry, I could not fetch or process the webpage.'];
-        }
-    }
-
-    /**
      * Search for relevant content from uploaded files using vector similarity.
      * If $selectedFiles is provided, only search within those specific files.
      */
@@ -835,5 +952,219 @@ EOT;
         $context .= "CRITICAL INSTRUCTION: When answering questions, ALWAYS prioritize and use the information above from the user's uploaded files as your primary source. Only fall back to your general knowledge about DEPDev if the question is completely unrelated to the uploaded content. Always cite which file the information comes from when possible.\n\n";
         
         return $context;
+    }
+
+    /**
+     * Search for relevant chunks of a cached webpage using vector similarity.
+     */
+    private function searchRelevantWebpageChunks(string $userMessage, string $webpageId): array
+    {
+        try {
+            $embeddingService = new \App\Services\EmbeddingService();
+            $vectorSearch = new \App\Services\VectorSearchService();
+            
+            // Generate embedding for user message
+            $queryEmbedding = $embeddingService->getEmbedding($userMessage);
+            
+            if (!$queryEmbedding) {
+                \Illuminate\Support\Facades\Log::warning('Failed to generate embedding for user message');
+                return [];
+            }
+            
+            // Search for similar chunks within the specific webpage
+            $similarChunks = $vectorSearch->searchSimilar($queryEmbedding, 5, [$webpageId]); // Get top 5 most relevant chunks
+            
+            // Filter out low similarity results (threshold of 0.3)
+            $relevantChunks = array_filter($similarChunks, function($chunk) {
+                return $chunk['similarity'] > 0.3;
+            });
+            
+            \Illuminate\Support\Facades\Log::info('Webpage RAG Search - Query: "' . $userMessage . '", Found: ' . count($relevantChunks) . ' relevant chunks for webpage ID ' . $webpageId);
+            
+            return $relevantChunks;
+            
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('Error searching for relevant webpage chunks: ' . $e->getMessage());
+            return [];
+        }
+    }
+
+    /**
+     * Process a webpage URL for RAG integration
+     * 
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function processWebpage(Request $request)
+    {
+        // Set a generous timeout for webpage processing
+        set_time_limit(300); // 5 minutes
+        
+        $url = $request->input('url');
+        
+        if (empty($url) || !filter_var($url, FILTER_VALIDATE_URL)) {
+            return response()->json(['error' => 'URL is required'], 400);
+        }
+
+        try {
+            // Check if webpage is already being processed
+            $webpageId = md5($url);
+            $existing = \Illuminate\Support\Facades\DB::table('webpages')
+                ->where('webpage_id', $webpageId)
+                ->first(); // Check for any status
+
+            if ($existing) {
+                // Check the existing webpage's status
+                switch ($existing->status) {
+                    case 'processing':
+                        return response()->json([
+                            'status' => 'processing',
+                            'message' => 'Webpage is already being processed.',
+                            'webpage_processing' => true,
+                            'url' => $url
+                        ]);
+                    case 'failed':
+                        // If it failed before, we'll try again
+                        \Illuminate\Support\Facades\DB::table('webpages')
+                            ->where('webpage_id', $webpageId)
+                            ->update([
+                                'status' => 'processing',
+                                'error_message' => null,
+                                'updated_at' => now()
+                            ]);
+                        break;
+                    case 'completed':
+                        // If it's already completed, we'll return success
+                        return response()->json([
+                            'status' => 'completed',
+                            'message' => 'Webpage has already been processed.',
+                            'webpage_processing' => false,
+                            'url' => $url
+                        ]);
+                }
+            }
+
+            // If we get here, either there was no existing record or it failed before
+            try {
+                // Create or update the webpage record
+                \Illuminate\Support\Facades\DB::table('webpages')
+                    ->updateOrInsert(
+                        ['webpage_id' => $webpageId],
+                        [
+                            'url' => $url,
+                            'status' => 'processing',
+                            'created_at' => now(),
+                            'updated_at' => now()
+                        ]
+                    );
+
+                // Dispatch the job to process the webpage
+                ProcessWebpageForRAG::dispatch($url, null, null);
+
+                return response()->json([
+                    'status' => 'processing',
+                    'message' => 'Webpage has been queued for processing.',
+                    'webpage_processing' => true,
+                    'url' => $url
+                ]);
+            } catch (\Exception $e) {
+                Log::error('Error processing webpage: ' . $e->getMessage());
+                return response()->json([
+                    'status' => 'failed',
+                    'message' => 'Failed to process webpage: ' . $e->getMessage(),
+                    'webpage_processing' => false,
+                    'url' => $url
+                ], 500);
+            }
+        } catch (\Exception $e) {
+            Log::error('Database error in processWebpage: ' . $e->getMessage());
+            return response()->json([
+                'status' => 'failed',
+                'message' => 'Internal server error',
+                'webpage_processing' => false,
+                'url' => $url
+            ], 500);
+        }
+    }
+
+    /**
+     * Build context from relevant webpage chunks for the LLM prompt.
+     */
+    private function buildWebpageContext(array $relevantChunks, string $title, string $url): string
+    {
+        if (empty($relevantChunks)) {
+            return '';
+        }
+        $context = "IMPORTANT: The following information comes from a webpage. Use this information as your primary source when answering questions:\n\n";
+        $context .= "Page Title: {$title}\n";
+        $context .= "URL: {$url}\n\n";
+        foreach ($relevantChunks as $index => $chunk) {
+            $context .= "--- Content chunk (relevance: " . round($chunk['similarity'], 3) . ") ---\n";
+            $context .= $chunk['chunk'] . "\n\n";
+        }
+        $context .= "CRITICAL INSTRUCTION: When answering questions, ALWAYS prioritize and use the information above from the webpage as your primary source. Only fall back to your general knowledge about DEPDev if the question is completely unrelated to the webpage content. Always cite the webpage title and URL when possible.\n\n";
+        return $context;
+    }
+
+    /**
+     * Check the processing status of webpages
+     */
+    public function webpageStatus(Request $request)
+    {
+        $urls = $request->input('urls', []);
+        
+        if (empty($urls)) {
+            // If no URLs provided, check all in-progress webpages
+            Log::info('Webpage processing status check', ['urls' => $urls]);
+            Log::info('Checking webpage processing status for URLs:');
+            Log::info('No URLs provided, checking all in-progress webpages');
+            
+            // Query all in-progress webpages (those without chunks)
+            $inProgressWebpages = \DB::table('webpages')
+                ->select('webpages.*')
+                ->leftJoin('webpage_chunks', 'webpages.id', '=', 'webpage_chunks.webpages_id')
+                ->whereNull('webpage_chunks.id')
+                ->get();
+            
+            Log::info('Found in-progress webpages:', $inProgressWebpages->pluck('url')->toArray());
+            
+            $statuses = [];
+            foreach ($inProgressWebpages as $webpage) {
+                $statuses[$webpage->url] = 'processing';
+            }
+            
+            return response()->json(['statuses' => $statuses]);
+        }
+
+        $statuses = [];
+        $errors = [];
+        
+        foreach ($urls as $url) {
+            $webpageId = md5($url);
+            $webpage = \DB::table('webpages')->where('webpage_id', $webpageId)->first();
+            
+            if (!$webpage) {
+                // URL not found in database
+                $statuses[$url] = 'failed';
+                $errors[$url] = 'Webpage not found in database';
+                continue;
+            }
+            
+            // Check if webpage has chunks (meaning it's been processed)
+            $hasChunks = \DB::table('webpage_chunks')
+                ->where('webpages_id', $webpage->id)
+                ->exists();
+            
+            if ($hasChunks) {
+                $statuses[$url] = 'completed';
+            } else {
+                $statuses[$url] = 'processing';
+            }
+        }
+        
+        return response()->json([
+            'statuses' => $statuses,
+            'errors' => $errors
+        ]);
     }
 }
