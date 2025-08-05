@@ -17,6 +17,20 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Application Full Name and Description
+    |--------------------------------------------------------------------------
+    |
+    | These values provide the full name and description of your application.
+    |
+    */
+
+    'full_name' => env('APP_FULL_NAME', 'Bot for Automated Semantic Assistance'),
+    'description' => env('APP_DESCRIPTION', 'An AI-powered chatbot for automated document assistance'),
+    'instance_operator' => env('APP_INSTANCE_OPERATOR', 'DEPDev'),
+    'instance_operator_full_name' => env('APP_INSTANCE_OPERATOR_FULL_NAME', 'Department of Economy, Planning, and Development'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Application Environment
     |--------------------------------------------------------------------------
     |
