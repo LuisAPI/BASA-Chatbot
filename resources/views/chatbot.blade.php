@@ -2,7 +2,7 @@
 
 @extends('layouts.app')
 
-@section('title', 'Bot for Automated Semantic Assistance')
+@section('title', config('app.full_name', 'Bot for Automated Semantic Assistance'))
 
 @section('head')
     <style>
@@ -130,7 +130,7 @@
         </div>
     </div>
     <div class="basa-disclaimer-bar w-100 bg-light text-center fw-lighter py-2 small text-muted" style="position: sticky; bottom: 0; left: 0; z-index: 9; border-top: 1px solid #e0e0e0;">
-        BASA can make mistakes in providing information. Check carefully.
+        {{ config('app.name', 'BASA') }} can make mistakes in providing information. Check carefully.
     </div>
     <div id="processing-files" class="mb-2"></div>
 </div>
